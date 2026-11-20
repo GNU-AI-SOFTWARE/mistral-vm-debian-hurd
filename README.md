@@ -27,8 +27,13 @@ password; the newer ones set one — so the CI copy (never the
 source image) gets root's password hash cleared in `/etc/shadow`
 at prepare time, exactly like the `console=com0` patch.  Custom
 images with a root password you want to keep can still pass
-`--root-pass PW`.  The login goes through the serial TCP socket,
-and any script can then run inside the guest.
+`--root-pass PW`.  To *set* a root password on the CI copy instead
+(for instance to use `ssh -p 2222 root@127.0.0.1` with a password
+while the VM runs), pass `--set-root-pass PW`: the SHA-512 hash is
+written to `/etc/shadow` and sshd is configured with
+`PermitRootLogin yes` / `PasswordAuthentication yes`.  The login
+goes through the serial TCP socket, and any script can then run
+inside the guest.
 
 ## Files
 
@@ -65,6 +70,8 @@ $ python3 hurd_vm.py debian-hurd-amd64-20260314.img my-script.sh
 #   --fresh         rebuild the CI copy even if cached
 #   --keep          keep the VM alive after the script
 #   --root-pass PW  the image's root password (custom images)
+#   --set-root-pass PW  set root's password to PW on the CI copy
+#                       (and enable root password logins in sshd)
 ```
 
 On the first run the driver prepares a **CI copy** of the image

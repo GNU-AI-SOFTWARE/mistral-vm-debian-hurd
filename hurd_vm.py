@@ -37,6 +37,11 @@ Usage:
              --keep     keep the VM alive after the script
              --root-pass PASSWORD   the image's root password
                                    (only needed for custom images)
+             --set-root-pass PW     set root's password to PW on the
+                                   CI copy (hash in /etc/shadow, sshd
+                                   configured for root password
+                                   logins); the driver then logs in
+                                   with it over the serial line
 
 The script runs as root inside the guest; its output arrives on the
 serial line (captured in serial.log and echoed here).  The guest
@@ -52,8 +57,10 @@ memory-tight host a bigger allocation kills the guest silently
 before even SeaBIOS runs.
 """
 
+import hashlib
 import os
 import re
+import secrets
 import shutil
 import socket
 import struct
@@ -103,6 +110,49 @@ def find_tool(name):
              f"(Debian: apt install e2fsprogs)")
 
 
+def sha512_crypt(password):
+    """SHA-512 crypt hash ($6$...) of PASSWORD for /etc/shadow: via
+    the host openssl (the password is fed on stdin, never on the
+    command line), falling back to Python's crypt module."""
+    openssl = shutil.which("openssl")
+    if openssl:
+        salt = secrets.token_hex(8)
+        r = subprocess.run([openssl, "passwd", "-6", "-salt", salt,
+                            "-stdin"], input=password,
+                           capture_output=True, text=True)
+        if r.returncode == 0 and r.stdout.startswith("$6$"):
+            return r.stdout.strip()
+    try:
+        import crypt
+        return crypt.crypt(password, crypt.mksalt(crypt.METHOD_SHA512))
+    except ImportError:
+        sys.exit("[vm] FAIL: no way to hash the password: need openssl "
+                 "or Python's crypt module")
+
+
+def replace_fs_file(debugfs, part, fs_path, content, needle):
+    """Replace the file FS_PATH inside the ext2 image PART with
+    CONTENT, then verify by reading it back: debugfs always exits 0,
+    even when a command failed (rm + write, since "write" refuses to
+    overwrite an existing file)."""
+    local = part + ".file"
+    with open(local, "w") as f:
+        f.write(content)
+    d, base = fs_path.rsplit("/", 1)
+    cmds = part + ".cmds"
+    with open(cmds, "w") as f:
+        f.write(f"cd {d}\nrm {base}\nwrite {local} {base}\n")
+    subprocess.run([debugfs, "-w", "-f", cmds, part],
+                   check=True, capture_output=True)
+    r = subprocess.run([debugfs, "-R", f"cat {fs_path}", part],
+                       capture_output=True, text=True)
+    for tmp in (local, cmds):
+        os.unlink(tmp)
+    if needle not in r.stdout:
+        sys.exit(f"[vm] FAIL: the {fs_path} patch did not land in the "
+                 f"image\n" + r.stdout[-2000:])
+
+
 # ------------------------------------------------------------------
 # Preparing the CI copy of the image.
 
@@ -141,7 +191,7 @@ def patch_grub_cfg(text):
     return "".join(out), patched
 
 
-def prepare_ci_image(src, fresh=False):
+def prepare_ci_image(src, fresh=False, root_pass=None):
     """Create (or reuse) the bootable CI copy of the image.
 
     The marker file besides the copy holds two lines: the source
@@ -150,10 +200,17 @@ def prepare_ci_image(src, fresh=False):
     unclean shutdown (a killed VM, a crashed driver) leaves the
     root filesystem inconsistent, and the guest would drop to an
     fsck maintenance shell instead of the login prompt.
+
+    With root_pass set, root's password hash in /etc/shadow is set
+    to that password instead of being cleared, and sshd is allowed
+    root password logins; the marker fingerprint then includes a
+    hash of the password, so changing it rebuilds the copy.
     """
     marker = CI_IMAGE + ".ready"
     src_stat = os.stat(src)
-    fingerprint = f"{os.path.getsize(src)}:{int(src_stat.st_mtime)}"
+    tag = "nopass" if root_pass is None else \
+        "pass-" + hashlib.sha256(root_pass.encode()).hexdigest()[:12]
+    fingerprint = f"{os.path.getsize(src)}:{int(src_stat.st_mtime)}:{tag}"
     e2fsck = find_tool("e2fsck")
     debugfs = find_tool("debugfs")
     lba, sectors = root_partition(src)
@@ -254,42 +311,57 @@ def prepare_ci_image(src, fresh=False):
         sys.exit("[vm] FAIL: the grub.cfg patch did not land in the "
                  "image\n" + r.stdout[-2000:])
 
-    # The driver logs in as root with no password: that is its CI
-    # contract.  The older preinstalled images shipped an empty
-    # root password, the newer ones do not - so the CI COPY (never
-    # the source) gets root's password hash cleared in /etc/shadow,
-    # exactly like the grub.cfg patch above.  Idempotent, verified
-    # after the write; a copy without /etc/shadow (none known)
-    # keeps whatever login policy it has.
+    # The driver logs in as root: that is its CI contract.  By
+    # default the older preinstalled images shipped an empty root
+    # password, the newer ones do not - so the CI COPY (never the
+    # source) gets root's password hash CLEARED in /etc/shadow,
+    # exactly like the grub.cfg patch above.  With --set-root-pass
+    # the SHA-512 hash of that password is written instead, and
+    # sshd is configured for root password logins (the 2222 host
+    # forward), so "ssh -p 2222 root@127.0.0.1" works while the VM
+    # runs.  Idempotent, verified after the write; a copy without
+    # /etc/shadow (none known) keeps whatever login policy it has.
     shadow_path = part + ".shadow"
     subprocess.run([debugfs, "-R", "dump /etc/shadow " + shadow_path,
                     part], check=True, capture_output=True)
     with open(shadow_path) as f:
         shadow = f.read()
-    new_shadow, n = re.subn(r"(?m)^root:[^:]*:", "root::", shadow,
-                           count=1)
-    if n == 1 and new_shadow != shadow:
-        with open(shadow_path, "w") as f:
-            f.write(new_shadow)
-        cmds = part + ".shadow.cmds"
-        with open(cmds, "w") as f:
-            f.write("cd /etc\n"
-                    "rm shadow\n"
-                    f"write {shadow_path} shadow\n")
-        subprocess.run([debugfs, "-w", "-f", cmds, part],
-                       check=True, capture_output=True)
-        r = subprocess.run([debugfs, "-R", "cat /etc/shadow", part],
-                           capture_output=True, text=True)
-        if re.search(r"(?m)^root::", r.stdout):
-            print("[vm] root password cleared on the CI copy")
-        else:
-            os.unlink(part)
-            sys.exit("[vm] FAIL: the /etc/shadow patch did not land "
-                     "in the image\n" + r.stdout[-2000:])
-        os.unlink(cmds)
+    if root_pass is None:
+        field, action = "", "cleared"
     else:
-        print("[vm] root password already empty on the CI copy")
+        field, action = sha512_crypt(root_pass), "set"
+    new_shadow, n = re.subn(r"(?m)^root:[^:]*:",
+                            lambda m: "root:" + field + ":",
+                            shadow, count=1)
+    if n == 1 and new_shadow != shadow:
+        replace_fs_file(debugfs, part, "/etc/shadow", new_shadow,
+                        "root:" + field + ":")
+        print(f"[vm] root password {action} on the CI copy")
+    else:
+        print(f"[vm] root password already {action} on the CI copy")
     os.unlink(shadow_path)
+
+    if root_pass is not None:
+        # Root password logins over SSH: in sshd_config the FIRST
+        # occurrence of a keyword wins, so prepend the directives -
+        # that also overrides any sshd_config.d include.
+        sshd_path = part + ".sshd_config"
+        subprocess.run([debugfs, "-R",
+                        "dump /etc/ssh/sshd_config " + sshd_path,
+                        part], check=True, capture_output=True)
+        if os.path.isfile(sshd_path) and os.path.getsize(sshd_path) > 0:
+            with open(sshd_path) as f:
+                sshd = f.read()
+            header = "PermitRootLogin yes\nPasswordAuthentication yes\n"
+            if not sshd.startswith(header):
+                replace_fs_file(debugfs, part, "/etc/ssh/sshd_config",
+                                header + sshd, "PermitRootLogin yes")
+                print("[vm] sshd: root password logins enabled "
+                      "on the CI copy")
+            os.unlink(sshd_path)
+        else:
+            print("[vm] note: no /etc/ssh/sshd_config in the image; "
+                  "root SSH password logins may stay disabled")
 
     subprocess.run(["dd", f"if={part}", f"of={CI_IMAGE}",
                     "bs=512", f"seek={lba}", "conv=notrunc",
@@ -470,7 +542,8 @@ class SerialVM:
 
 
 def parse_args(argv):
-    opts = {"ram": "1G", "fresh": False, "keep": False, "root_pass": None}
+    opts = {"ram": "1G", "fresh": False, "keep": False, "root_pass": None,
+            "set_root_pass": None}
     rest = []
     i = 0
     while i < len(argv):
@@ -485,6 +558,9 @@ def parse_args(argv):
         elif a == "--root-pass":
             i += 1
             opts["root_pass"] = argv[i]
+        elif a == "--set-root-pass":
+            i += 1
+            opts["set_root_pass"] = argv[i]
         else:
             rest.append(a)
         i += 1
@@ -496,7 +572,11 @@ def run(src, script, opts):
     if not os.path.isfile(src):
         print(f"[vm] FAIL: no such image: {src}")
         return 2
-    disk = prepare_ci_image(src, opts["fresh"])
+    if opts["set_root_pass"] is not None and opts["root_pass"] is None:
+        # The driver logs in over the serial line with the password it
+        # just set on the CI copy.
+        opts["root_pass"] = opts["set_root_pass"]
+    disk = prepare_ci_image(src, opts["fresh"], root_pass=opts["set_root_pass"])
     marker = disk + ".ready"
 
     # From now on the copy is "dirty" until the guest has powered
