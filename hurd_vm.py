@@ -295,7 +295,10 @@ def prepare_ci_image(src, fresh=False):
                     "bs=512", f"seek={lba}", "conv=notrunc",
                     "status=none"], check=True)
     for tmp in (part, cfg_path, cmds):
-        os.unlink(tmp)
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass          # already removed above (e.g. cmds after the shadow patch)
 
     with open(marker, "w") as f:
         f.write(fingerprint + " clean\n")
@@ -369,7 +372,7 @@ class SerialVM:
         # two concurrent VMs cannot share it (HURD_VM_SSH_PORT).
         ssh_port = os.environ.get("HURD_VM_SSH_PORT", "2222")
         return [
-            "qemu-system-x86_64", accel, "-m", self.memory,
+            "qemu-system-x86_64", *accel, "-m", self.memory,
             # Two vCPUs: the guests compile (the Hurd, Mach) and a
             # single core makes every build painfully slow.
             "-smp", "2", "-no-reboot",
@@ -380,8 +383,14 @@ class SerialVM:
             "-serial", f"tcp:127.0.0.1:{self.port},server,nowait",
         ]
 
-    def start(self):
-        accel = "-enable-kvm" if os.path.exists("/dev/kvm") else "-accel tcg"
+    def start(self, accel=None):
+        # Bounded fallback: /dev/kvm may exist but be unusable (e.g. CI
+        # runners: "failed to initialize kvm: Permission denied"), so
+        # retry exactly once with TCG, never recursively.
+        if accel is None:
+            # accel is a LIST of argv items: "-accel tcg" must stay two
+            # separate arguments, otherwise QEMU says "invalid option".
+            accel = ["-enable-kvm"] if os.path.exists("/dev/kvm") else ["-accel", "tcg"]
         with open(QEMU_LOG, "wb") as errf:
             self.proc = subprocess.Popen(self._base_cmd(accel),
                                          stdout=subprocess.DEVNULL,
@@ -396,14 +405,14 @@ class SerialVM:
                 except OSError:
                     if self.proc.poll() is not None:
                         reason = self._qemu_tail()
-                        if (accel == "-enable-kvm"
+                        if (accel == ["-enable-kvm"]
                                 and ("kvm" in reason.lower()
                                      or "could not access" in reason.lower())):
                             print(f"[vm] KVM failed, falling back to "
                                   f"TCG:\n{reason}")
-                            accel = "-accel tcg"
+                            accel = ["-accel", "tcg"]
                             errf.close()
-                            return self.start()
+                            return self.start(["-accel", "tcg"])
                         if "Failed to get" in reason and "lock" in reason:
                             pids = find_running_vms(self.disk)
                             raise RuntimeError(
@@ -559,15 +568,16 @@ def run(src, script, opts):
                 m = re.search(rb"GUESTRC=(\d+)", vm.log)
                 rc = 0 if int(m.group(1)) == 0 else 1
             print(vm.log.decode("latin-1", "replace")[-4000:])
-        if rc == 0 and not opts["keep"]:
-            # Shut the guest down cleanly and WAIT for it: killing
-            # QEMU mid-shutdown leaves the filesystem inconsistent.
-            # A powered-off guest makes QEMU exit by itself
-            # (ACPI), so watch the process instead of guessing a
-            # delay.
+        if not opts["keep"]:
+            # Shut the guest down cleanly and WAIT for it, even when
+            # the guest script failed: killing QEMU mid-shutdown
+            # leaves the filesystem inconsistent and the next run
+            # pays a full e2fsck repair.  A powered-off guest makes
+            # QEMU exit by itself (ACPI), so watch the process
+            # instead of guessing a delay.
             vm.send("poweroff")
             print("[vm] waiting for the guest to power off...")
-            deadline = time.time() + 180
+            deadline = time.time() + 300
             while time.time() < deadline and vm.proc.poll() is None:
                 vm.read_some(5)
             if vm.proc.poll() is None:
