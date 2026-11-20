@@ -670,7 +670,12 @@ def run(src, script, opts):
     finally:
         with open(SERIAL_LOG, "wb") as logf:
             logf.write(vm.log)
-        vm.stop()
+        # --keep leaves QEMU running when the driver exits (the guest
+        # is NOT powered off: the marker stays "dirty" and the next
+        # run repairs the filesystem); the serial TCP socket closes
+        # with the driver but the 2222 SSH forward stays up.
+        if not opts["keep"]:
+            vm.stop()
         print("[vm] serial console saved to serial.log")
     return rc
 
