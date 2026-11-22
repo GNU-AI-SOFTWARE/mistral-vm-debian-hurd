@@ -15,6 +15,10 @@
 # looked up in /usr/sbin and /sbin too, via hurd_vm.find_tool), python3
 # (uses hurd_vm.root_partition).  The CI image is modified in place;
 # pass --fresh to hurd_vm.py afterwards to rebuild it from scratch.
+#
+# The extracted root partition (~1 GB) goes to ${TMPDIR:-/tmp}: on
+# hosts where /tmp is a small tmpfs, set TMPDIR to a big disk, e.g.
+#   TMPDIR=$HOME/tmp ./inject-src.sh ~/inference-src.tar.gz
 
 set -eu
 
@@ -37,7 +41,7 @@ print(*h.root_partition('$ci'), h.find_tool('e2fsck'), h.find_tool('debugfs'))
 ")
 PYEOF
 
-part=$(mktemp /tmp/hurd-rootpart.XXXXXX)
+part=$(mktemp "${TMPDIR:-/tmp}/hurd-rootpart.XXXXXX")
 trap 'rm -f "$part"' EXIT
 dd if="$ci" of="$part" bs=512 skip="$lba" count="$sectors" status=none
 # e2fsck exit codes: 0 = clean, 1-3 = errors corrected, >=4 = unfixable.
