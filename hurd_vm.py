@@ -658,6 +658,23 @@ def run(src, script, opts):
                 m = re.search(rb"GUESTRC=(\d+)", vm.log)
                 rc = 0 if int(m.group(1)) == 0 else 1
             print(vm.log.decode("latin-1", "replace")[-4000:])
+        if opts["keep"]:
+            # The serial TCP socket closes when this driver exits, so the
+            # SSH hostfwd is the only way back into a kept VM: make sure
+            # the guest sshd is up before leaving (a kept VM whose sshd
+            # is down answers "Connection closed" on the host port).
+            vm.send("mkdir -p /run/sshd; ssh-keygen -A >/dev/null 2>&1; "
+                    "service ssh start >/dev/null 2>&1 || /usr/sbin/sshd; "
+                    "echo SSHD-RC=$?")
+            try:
+                if vm.wait_for(r"SSHD-RC=\d+", 60):
+                    m = re.search(rb"SSHD-RC=(\d+)", vm.log)
+                    print("[vm] guest sshd rc=" + m.group(1).decode()
+                          + " (ssh -p "
+                          + os.environ.get("HURD_VM_SSH_PORT", "2222")
+                          + " root@127.0.0.1)")
+            except RuntimeError:
+                print("[vm] warning: the guest sshd did not answer")
         if not opts["keep"]:
             # Shut the guest down cleanly and WAIT for it, even when
             # the guest script failed: killing QEMU mid-shutdown
