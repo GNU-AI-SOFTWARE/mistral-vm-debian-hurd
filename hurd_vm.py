@@ -58,6 +58,17 @@ host forward to its SSH port.  The prepared CI copy is kept between
 runs (named <image>.ci.img next to this file): packages installed
 by earlier scripts stay installed; pass --fresh to rebuild it.
 
+Environment variables:
+    HURD_VM_SSH_PORT  host port forwarded to guest 22 (default 2222)
+    HURD_VM_SSH_BIND  host address the forward binds to (default
+                      127.0.0.1; set your LAN IP, e.g. 192.168.1.50, to
+                      let other machines on the LAN reach the VM --
+                      root SSH is then exposed to that network, so use
+                      --ssh-key and keep the root password strong)
+    HURD_VM_NET       slirp subnet, e.g. 192.168.1.0/24 (default
+                      10.0.2.0/24): the guest gets <net>.15, gateway
+                      <net>.2, DNS <net>.3 via DHCP at boot
+
 Requires on the host: qemu-system-x86 (KVM used when /dev/kvm is
 available), e2fsprogs (e2fsck, debugfs), python3.  The guest is
 given 1 GB of RAM by default: it boots fine with that, and on a
@@ -66,6 +77,7 @@ before even SeaBIOS runs.
 """
 
 import hashlib
+import ipaddress
 import os
 import re
 import secrets
@@ -474,6 +486,16 @@ def find_running_vms(image):
 # ------------------------------------------------------------------
 
 
+def slirp_addrs(net):
+    """slirp conventions for -net user,net=CIDR: guest <base>.15,
+    gateway <base>.2, DNS <base>.3, netmask from the CIDR."""
+    n = ipaddress.ip_network(net, strict=False)
+    base = int(n.network_address)
+    return (str(ipaddress.ip_address(base + 15)), str(n.netmask),
+            str(ipaddress.ip_address(base + 2)),
+            str(ipaddress.ip_address(base + 3)))
+
+
 class SerialVM:
     """QEMU with the serial line on a local TCP socket (raw bytes,
     not Telnet: the telnet chardev's IAC negotiation proved flaky).
@@ -498,15 +520,20 @@ class SerialVM:
         # Boot the disk itself: the image's own GRUB, with the
         # patched grub.cfg, handles everything from there.
         # The host port forwarded to the guest SSH is configurable:
-        # two concurrent VMs cannot share it (HURD_VM_SSH_PORT).
+        # two concurrent VMs cannot share it (HURD_VM_SSH_PORT), and it
+        # binds to loopback unless HURD_VM_SSH_BIND says otherwise.
+        # HURD_VM_NET overrides the slirp subnet (e.g. 192.168.1.0/24).
         ssh_port = os.environ.get("HURD_VM_SSH_PORT", "2222")
+        ssh_bind = os.environ.get("HURD_VM_SSH_BIND", "127.0.0.1")
+        net = os.environ.get("HURD_VM_NET", "")
+        netarg = f",net={net}" if net else ""
         return [
             "qemu-system-x86_64", *accel, "-m", self.memory,
             # Two vCPUs: the guests compile (the Hurd, Mach) and a
             # single core makes every build painfully slow.
             "-smp", "2", "-no-reboot",
             "-drive", f"file={self.disk},cache=writeback",
-            "-net", f"user,hostfwd=tcp:127.0.0.1:{ssh_port}-:22",
+            "-net", f"user,hostfwd=tcp:{ssh_bind}:{ssh_port}-:22{netarg}",
             "-net", "nic,model=e1000",
             "-display", "none",
             "-serial", f"tcp:127.0.0.1:{self.port},server,nowait",
@@ -680,6 +707,19 @@ def run(src, script, opts):
         if not vm.wait_for(r"root@|# ", 120):
             print("[vm] FAIL: no shell prompt after login")
             return 1
+
+        # With a custom slirp subnet (HURD_VM_NET=192.168.1.0/24), export
+        # the matching guest address/gateway/DNS so the guest scripts
+        # (guest_net in guest-inference.sh, guest-netfix.sh) use them
+        # instead of the 10.0.2.x defaults.
+        net = os.environ.get("HURD_VM_NET")
+        if net:
+            addr, mask, gw, dns = slirp_addrs(net)
+            vm.send("export HURD_VM_GUEST_ADDR=%s HURD_VM_GUEST_MASK=%s "
+                    "HURD_VM_GUEST_GW=%s HURD_VM_GUEST_DNS=%s"
+                    % (addr, mask, gw, dns))
+            time.sleep(1)
+            vm.read_some(1)
 
         if script is None:
             print("[vm] interactive boot complete")
