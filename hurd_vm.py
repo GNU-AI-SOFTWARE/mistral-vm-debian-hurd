@@ -311,6 +311,14 @@ def prepare_ci_image(src, fresh=False, root_pass=None):
         sys.exit("[vm] FAIL: the grub.cfg patch did not land in the "
                  "image\n" + r.stdout[-2000:])
 
+    # A stale /run/network/ifstate shipped in the image makes the boot's
+    # ifup skip eth0 ("already configured") while netdde never runs, so
+    # the guest gets no 10.0.2.15 and the SSH hostfwd answers "Connection
+    # reset".  Drop the file from the CI copy so every boot re-runs
+    # ifup/DHCP.  debugfs rm on a missing file only prints an error.
+    subprocess.run([debugfs, "-w", "-R", "rm /run/network/ifstate", part],
+                   capture_output=True)
+
     # The driver logs in as root: that is its CI contract.  By
     # default the older preinstalled images shipped an empty root
     # password, the newer ones do not - so the CI COPY (never the
