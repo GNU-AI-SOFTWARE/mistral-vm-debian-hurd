@@ -527,13 +527,19 @@ class SerialVM:
         ssh_bind = os.environ.get("HURD_VM_SSH_BIND", "127.0.0.1")
         net = os.environ.get("HURD_VM_NET", "")
         netarg = f",net={net}" if net else ""
+        # Always forward on loopback; with HURD_VM_SSH_BIND set to
+        # another host address, add a second forward on that address
+        # (QEMU allows several hostfwd on different bind addresses).
+        hostfwd = f"hostfwd=tcp:127.0.0.1:{ssh_port}-:22"
+        if ssh_bind not in ("", "127.0.0.1", "localhost"):
+            hostfwd += f",hostfwd=tcp:{ssh_bind}:{ssh_port}-:22"
         return [
             "qemu-system-x86_64", *accel, "-m", self.memory,
             # Two vCPUs: the guests compile (the Hurd, Mach) and a
             # single core makes every build painfully slow.
             "-smp", "2", "-no-reboot",
             "-drive", f"file={self.disk},cache=writeback",
-            "-net", f"user,hostfwd=tcp:{ssh_bind}:{ssh_port}-:22{netarg}",
+            "-net", f"user,{hostfwd}{netarg}",
             "-net", "nic,model=e1000",
             "-display", "none",
             "-serial", f"tcp:127.0.0.1:{self.port},server,nowait",
