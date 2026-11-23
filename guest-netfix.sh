@@ -44,21 +44,37 @@ mkdir -p /run/network 2>/dev/null
 if ifconfig eth0 2>/dev/null | grep -q "inet $GUEST_ADDR"; then
     echo "eth0 already $GUEST_ADDR (boot DHCP via netdde)"
 else
-    ifdown eth0 2>/dev/null
-    ifup eth0 2>&1
-    echo "ifup eth0 rc=$?"
+    ifdown eth0 2>/dev/null || true
+    rc=0
+    ifup eth0 2>&1 || rc=$?
+    echo "ifup eth0 rc=$rc"
     sleep 2
+    if ! ifconfig eth0 2>/dev/null | grep -q "inet $GUEST_ADDR"; then
+        # ifup failed (stale ifstate at boot, or a translator already on
+        # socket/2): configure the deterministic slirp address statically.
+        # On Hurd, ifconfig also starts the passive translator on
+        # /servers/socket/2.
+        echo "WARN: ifup rc=$rc without $GUEST_ADDR; static ifconfig fallback"
+        ifconfig eth0 "$GUEST_ADDR" netmask "$GUEST_MASK" up 2>&1 || true
+        route add default "$GUEST_GW" 2>&1 || true
+        sleep 1
+    fi
 fi
 if ! ifconfig eth0 2>/dev/null | grep -q "inet $GUEST_ADDR"; then
     echo "WARN: eth0 has no $GUEST_ADDR; device and server state:"
     ifconfig -a 2>&1 || true
     ls -l /dev/eth* 2>&1 || true
     showtrans /servers/socket/2 2>&1 || true
+    if [ -e /dev/eth0 ]; then
+        echo "WARN: /dev/eth0 exists; dhclient -1 fallback"
+        timeout 20 dhclient -1 /dev/eth0 2>&1 | tail -5 || true
+        sleep 1
+    fi
     if ! showtrans /servers/socket/2 2>&1 | grep -q .; then
         echo "WARN: socket server free; last resort: static pfinet"
         settrans -a /servers/socket/2 /hurd/pfinet \
-            -i /dev/eth0 -a "$GUEST_ADDR" -m "$GUEST_MASK" -g "$GUEST_GW" 2>&1
-        echo "pfinet attach rc=$?"
+            -i /dev/eth0 -a "$GUEST_ADDR" -m "$GUEST_MASK" -g "$GUEST_GW" 2>&1 \
+            || echo "WARN: pfinet attach rc=$?"
         sleep 2
     else
         echo "WARN: /servers/socket/2 already has a translator; not touching it"
