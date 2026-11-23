@@ -538,7 +538,9 @@ class SerialVM:
             # Two vCPUs: the guests compile (the Hurd, Mach) and a
             # single core makes every build painfully slow.
             "-smp", "2", "-no-reboot",
-            "-drive", f"file={self.disk},cache=writeback",
+            # format=raw: silence QEMU's probing warning and lift the
+            # block-0 write restriction it imposes on raw images
+            "-drive", f"file={self.disk},cache=writeback,format=raw",
             "-net", f"user,{hostfwd}{netarg}",
             "-net", "nic,model=e1000",
             "-display", "none",
