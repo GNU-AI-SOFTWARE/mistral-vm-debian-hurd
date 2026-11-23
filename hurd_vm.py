@@ -36,7 +36,13 @@ Usage:
              --fresh    rebuild the CI copy even if cached
              --keep     keep the VM alive after the script (QEMU is
                                    started in its own session, so it also
-                                   survives the driver and the terminal)
+                                   survives the driver and the terminal;
+                                   the guest sshd is started before exit)
+             --ssh-key FILE
+                                   authorize FILE (*.pub) for root SSH
+                                   logins on the CI copy; the host then
+                                   connects with:
+                                   ssh -i <private key> -p 2222 root@127.0.0.1
              --root-pass PASSWORD   the image's root password
                                    (only needed for custom images)
              --set-root-pass PW     set root's password to PW on the
@@ -193,7 +199,7 @@ def patch_grub_cfg(text):
     return "".join(out), patched
 
 
-def prepare_ci_image(src, fresh=False, root_pass=None):
+def prepare_ci_image(src, fresh=False, root_pass=None, ssh_key=None):
     """Create (or reuse) the bootable CI copy of the image.
 
     The marker file besides the copy holds two lines: the source
@@ -207,11 +213,19 @@ def prepare_ci_image(src, fresh=False, root_pass=None):
     to that password instead of being cleared, and sshd is allowed
     root password logins; the marker fingerprint then includes a
     hash of the password, so changing it rebuilds the copy.
+
+    With ssh_key set, that public key is installed as
+    /root/.ssh/authorized_keys for root key logins; the marker
+    fingerprint then also includes a hash of the key, so changing
+    either rebuilds the copy.
     """
     marker = CI_IMAGE + ".ready"
     src_stat = os.stat(src)
     tag = "nopass" if root_pass is None else \
         "pass-" + hashlib.sha256(root_pass.encode()).hexdigest()[:12]
+    if ssh_key is not None:
+        with open(ssh_key, "rb") as f:
+            tag += "-key-" + hashlib.sha256(f.read()).hexdigest()[:12]
     fingerprint = f"{os.path.getsize(src)}:{int(src_stat.st_mtime)}:{tag}"
     e2fsck = find_tool("e2fsck")
     debugfs = find_tool("debugfs")
@@ -364,6 +378,39 @@ def prepare_ci_image(src, fresh=False, root_pass=None):
         else:
             print("[vm] note: no /etc/ssh/sshd_config in the image; "
                   "root SSH password logins may stay disabled")
+
+    if ssh_key is not None:
+        # Root SSH key login: install the public key as
+        # /root/.ssh/authorized_keys (dir 0700, file 0600) with debugfs,
+        # like the shadow/sshd patches above.  PubkeyAuthentication is
+        # on by default; the header above allows root logins.
+        with open(ssh_key) as f:
+            pub = f.read().strip()
+        if not pub or " " not in pub:
+            sys.exit(f"[vm] FAIL: {ssh_key} does not look like a public key")
+        key_host = part + ".authorized_keys"
+        cmds_key = part + ".ssh.cmds"
+        with open(key_host, "w") as f:
+            f.write(pub + "\n")
+        with open(cmds_key, "w") as f:
+            f.write("cd /root\n"
+                    "mkdir .ssh\n"
+                    "cd .ssh\n"
+                    "rm authorized_keys\n"
+                    f"write {key_host} authorized_keys\n"
+                    "sif authorized_keys mode 0100600\n"
+                    "sif /root/.ssh mode 040700\n")
+        subprocess.run([debugfs, "-w", "-f", cmds_key, part],
+                       check=True, capture_output=True)
+        r = subprocess.run([debugfs, "-R", "cat /root/.ssh/authorized_keys",
+                            part], capture_output=True, text=True)
+        os.unlink(key_host)
+        os.unlink(cmds_key)
+        if pub not in r.stdout:
+            sys.exit("[vm] FAIL: the authorized_keys patch did not land "
+                     "in the image:\n" + r.stdout[-500:])
+        print(f"[vm] ssh key {os.path.basename(ssh_key)} authorized "
+              "for root on the CI copy")
 
     subprocess.run(["dd", f"if={part}", f"of={CI_IMAGE}",
                     "bs=512", f"seek={lba}", "conv=notrunc",
@@ -553,7 +600,7 @@ class SerialVM:
 
 def parse_args(argv):
     opts = {"ram": "1G", "fresh": False, "keep": False, "root_pass": None,
-            "set_root_pass": None}
+            "set_root_pass": None, "ssh_key": None}
     rest = []
     i = 0
     while i < len(argv):
@@ -571,6 +618,9 @@ def parse_args(argv):
         elif a == "--set-root-pass":
             i += 1
             opts["set_root_pass"] = argv[i]
+        elif a == "--ssh-key":
+            i += 1
+            opts["ssh_key"] = argv[i]
         else:
             rest.append(a)
         i += 1
@@ -586,7 +636,8 @@ def run(src, script, opts):
         # The driver logs in over the serial line with the password it
         # just set on the CI copy.
         opts["root_pass"] = opts["set_root_pass"]
-    disk = prepare_ci_image(src, opts["fresh"], root_pass=opts["set_root_pass"])
+    disk = prepare_ci_image(src, opts["fresh"], root_pass=opts["set_root_pass"],
+                            ssh_key=opts["ssh_key"])
     marker = disk + ".ready"
 
     # From now on the copy is "dirty" until the guest has powered
@@ -660,21 +711,27 @@ def run(src, script, opts):
             print(vm.log.decode("latin-1", "replace")[-4000:])
         if opts["keep"]:
             # The serial TCP socket closes when this driver exits, so the
-            # SSH hostfwd is the only way back into a kept VM: make sure
-            # the guest sshd is up before leaving (a kept VM whose sshd
-            # is down answers "Connection closed" on the host port).
+            # SSH hostfwd is the only way back into a kept VM: bring the
+            # guest sshd up and verify it answers locally before leaving
+            # (sshd down -> "Connection closed" on the host port; eth0
+            # unconfigured -> "Connection reset" at kex time).
             vm.send("mkdir -p /run/sshd; ssh-keygen -A >/dev/null 2>&1; "
                     "service ssh start >/dev/null 2>&1 || /usr/sbin/sshd; "
-                    "echo SSHD-RC=$?")
+                    "sleep 1; pgrep -l sshd; "
+                    "ifconfig eth0 2>/dev/null | grep -E 'eth0|inet ' | head -3; "
+                    "bash -c 'exec 3<>/dev/tcp/127.0.0.1/22 && head -c 30 <&3'; "
+                    "echo; echo SSHD-RC=$?")
             try:
-                if vm.wait_for(r"SSHD-RC=\d+", 60):
-                    m = re.search(rb"SSHD-RC=(\d+)", vm.log)
-                    print("[vm] guest sshd rc=" + m.group(1).decode()
-                          + " (ssh -p "
+                if vm.wait_for(r"SSHD-RC=\d+", 90):
+                    print("[vm] guest sshd check (serial tail):")
+                    print(vm.log.decode("latin-1", "replace")[-500:])
+                    key = opts.get("ssh_key")
+                    hint = (" -i " + key) if key else ""
+                    print("[vm] kept VM reachable: ssh" + hint + " -p "
                           + os.environ.get("HURD_VM_SSH_PORT", "2222")
-                          + " root@127.0.0.1)")
+                          + " root@127.0.0.1")
             except RuntimeError:
-                print("[vm] warning: the guest sshd did not answer")
+                print("[vm] warning: the guest sshd check did not answer")
         if not opts["keep"]:
             # Shut the guest down cleanly and WAIT for it, even when
             # the guest script failed: killing QEMU mid-shutdown
