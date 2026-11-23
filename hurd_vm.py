@@ -769,15 +769,29 @@ def run(src, script, opts):
             # guest sshd up and verify it answers locally before leaving
             # (sshd down -> "Connection closed" on the host port; eth0
             # unconfigured -> "Connection reset" at kex time).
-            vm.send("mkdir -p /run/sshd; ssh-keygen -A >/dev/null 2>&1; "
-                    "service ssh start >/dev/null 2>&1 || /usr/sbin/sshd; "
-                    "sleep 1; pgrep -l sshd; "
-                    "ifconfig -a 2>/dev/null | grep -E '^[a-z]|inet ' | head -8; "
-                    "ls -l /dev/eth* 2>&1 | head -3; "
-                    "showtrans /servers/socket/2 2>&1 | head -2; "
-                    "bash -c 'exec 3<>/dev/tcp/127.0.0.1/22 && head -c 30 <&3'; echo; "
-                    "bash -c 'exec 3<>/dev/tcp/${HURD_VM_GUEST_ADDR:-10.0.2.15}/22 "
-                    "&& head -c 30 <&3'; echo; echo SSHD-RC=$?")
+            vm.send(
+                "mkdir -p /run/sshd; ssh-keygen -A >/dev/null 2>&1; "
+                "pgrep -x sshd >/dev/null 2>&1 "
+                "|| { service ssh start >/dev/null 2>&1 || /usr/sbin/sshd; sleep 1; }; "
+                "pgrep -l sshd; "
+                "ifconfig -a 2>/dev/null | grep -E '^[a-z]|inet ' | head -8; "
+                "ls -l /dev/eth* 2>&1 | head -3; "
+                "showtrans /servers/socket/2 2>&1 | head -2; "
+                "(netstat -ltn 2>/dev/null || cat /proc/net/tcp /proc/net/tcp6 "
+                "2>/dev/null) | head -8; "
+                # the hostfwd targets guest IPv4 :22; if sshd only listens
+                # on IPv6 (or not at all), restart it bound to 0.0.0.0
+                "if ! netstat -ltn 2>/dev/null | grep -q ':22 '; then "
+                "echo 'WARN: no IPv4 :22 listener; restart sshd with "
+                "ListenAddress=0.0.0.0'; "
+                "pkill -x sshd 2>/dev/null || true; sleep 1; "
+                "/usr/sbin/sshd -o ListenAddress=0.0.0.0 2>&1 || true; sleep 1; "
+                "fi; "
+                "netstat -ltn 2>/dev/null | grep ':22 ' || true; "
+                "bash -c 'exec 3<>/dev/tcp/127.0.0.1/22 && head -c 30 <&3'; echo; "
+                "bash -c 'exec 3<>/dev/tcp/${HURD_VM_GUEST_ADDR:-10.0.2.15}/22 "
+                "&& head -c 30 <&3'; echo; "
+                "echo SSHD-RC=$?")
             try:
                 if vm.wait_for(r"SSHD-RC=\d+", 90):
                     print("[vm] guest sshd check (serial tail):")
