@@ -27,23 +27,36 @@ rm -rf /run/network/ifstate 2>/dev/null
 mkdir -p /run/network 2>/dev/null
 : > /run/network/ifstate 2>/dev/null || true
 
-# Attach pfinet to eth0 with a static slirp configuration; -g sets
-# the default gateway (see pfinet/options.c in the Hurd sources).
-# Keep the errors visible: a silent failure here leaves eth0 without
-# 10.0.2.15 and the QEMU hostfwd answers "Connection reset".
-settrans -fg /servers/socket/2 /hurd/pfinet \
-    -i /dev/eth0 -a 10.0.2.15 -m 255.255.255.0 -g 10.0.2.2 2>&1
-rc=$?
-if [ "$rc" -ne 0 ]; then
-    echo "WARN: pfinet attach on /dev/eth0 failed (rc=$rc), trying eth0"
-    settrans -a /servers/socket/2 /hurd/pfinet \
-        -i eth0 -a 10.0.2.15 -m 255.255.255.0 -g 10.0.2.2 2>&1
-    rc=$?
+# The image's NIC is driven by netdde, started by ifup at boot with
+# DHCP from slirp (bound to 10.0.2.15).  The ifstate clearing above
+# fixes the usual "already configured" skip; re-run ifup so netdde
+# (re)attaches and dhclient (re)binds.  NEVER attach pfinet with -fg
+# on /servers/socket/2: that kills netdde and removes /dev/eth0,
+# leaving the guest with no network at all (the QEMU hostfwd then
+# answers "Connection reset").  pfinet is a last resort, only on a
+# free socket server.
+if ifconfig eth0 2>/dev/null | grep -q 'inet 10.0.2.15'; then
+    echo "eth0 already 10.0.2.15 (boot DHCP via netdde)"
+else
+    ifdown eth0 2>/dev/null
+    ifup eth0 2>&1
+    echo "ifup eth0 rc=$?"
+    sleep 2
 fi
-if [ "$rc" -ne 0 ]; then
-    echo "WARN: pfinet attach failed (rc=$rc); device and server state:"
+if ! ifconfig eth0 2>/dev/null | grep -q 'inet 10.0.2.15'; then
+    echo "WARN: eth0 has no 10.0.2.15; device and server state:"
+    ifconfig -a 2>&1 || true
     ls -l /dev/eth* 2>&1 || true
     showtrans /servers/socket/2 2>&1 || true
+    if ! showtrans /servers/socket/2 2>&1 | grep -q .; then
+        echo "WARN: socket server free; last resort: static pfinet"
+        settrans -a /servers/socket/2 /hurd/pfinet \
+            -i /dev/eth0 -a 10.0.2.15 -m 255.255.255.0 -g 10.0.2.2 2>&1
+        echo "pfinet attach rc=$?"
+        sleep 2
+    else
+        echo "WARN: /servers/socket/2 already has a translator; not touching it"
+    fi
 fi
 
 sleep 2
