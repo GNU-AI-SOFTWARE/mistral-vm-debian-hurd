@@ -28,15 +28,27 @@ mkdir -p /run/network 2>/dev/null
 : > /run/network/ifstate 2>/dev/null || true
 
 # Attach pfinet to eth0 with a static slirp configuration; -g sets
-# the default gateway (see pfinet/options.c in the Hurd sources):
+# the default gateway (see pfinet/options.c in the Hurd sources).
+# Keep the errors visible: a silent failure here leaves eth0 without
+# 10.0.2.15 and the QEMU hostfwd answers "Connection reset".
 settrans -fg /servers/socket/2 /hurd/pfinet \
-    -i /dev/eth0 -a 10.0.2.15 -m 255.255.255.0 -g 10.0.2.2 2>&1 \
-|| settrans -a /servers/socket/2 /hurd/pfinet \
-    -i eth0 -a 10.0.2.15 -m 255.255.255.0 -g 10.0.2.2 2>&1 \
-|| echo "WARN: pfinet attach failed"
+    -i /dev/eth0 -a 10.0.2.15 -m 255.255.255.0 -g 10.0.2.2 2>&1
+rc=$?
+if [ "$rc" -ne 0 ]; then
+    echo "WARN: pfinet attach on /dev/eth0 failed (rc=$rc), trying eth0"
+    settrans -a /servers/socket/2 /hurd/pfinet \
+        -i eth0 -a 10.0.2.15 -m 255.255.255.0 -g 10.0.2.2 2>&1
+    rc=$?
+fi
+if [ "$rc" -ne 0 ]; then
+    echo "WARN: pfinet attach failed (rc=$rc); device and server state:"
+    ls -l /dev/eth* 2>&1 || true
+    showtrans /servers/socket/2 2>&1 || true
+fi
 
 sleep 2
 ifconfig -a
+showtrans /servers/socket/2 2>&1 || true
 
 i=0
 until getent hosts deb.debian.org >/dev/null 2>&1; do
