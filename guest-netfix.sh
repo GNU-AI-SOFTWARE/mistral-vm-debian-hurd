@@ -15,10 +15,16 @@
 
 set -u
 
+# Addresses come from the driver (HURD_VM_NET=...), defaults 10.0.2.x.
+GUEST_ADDR=${HURD_VM_GUEST_ADDR:-10.0.2.15}
+GUEST_MASK=${HURD_VM_GUEST_MASK:-255.255.255.0}
+GUEST_GW=${HURD_VM_GUEST_GW:-10.0.2.2}
+GUEST_DNS=${HURD_VM_GUEST_DNS:-10.0.2.3}
+
 ls -l /dev/eth0 2>&1 || true
 
 rm -f /etc/resolv.conf
-printf 'nameserver 10.0.2.3\noptions timeout:2 attempts:2\n' > /etc/resolv.conf
+printf 'nameserver %s\noptions timeout:2 attempts:2\n' "$GUEST_DNS" > /etc/resolv.conf
 cat /etc/resolv.conf
 
 # The image sometimes ships /run/network/ifstate as a directory,
@@ -35,23 +41,23 @@ mkdir -p /run/network 2>/dev/null
 # leaving the guest with no network at all (the QEMU hostfwd then
 # answers "Connection reset").  pfinet is a last resort, only on a
 # free socket server.
-if ifconfig eth0 2>/dev/null | grep -q 'inet 10.0.2.15'; then
-    echo "eth0 already 10.0.2.15 (boot DHCP via netdde)"
+if ifconfig eth0 2>/dev/null | grep -q "inet $GUEST_ADDR"; then
+    echo "eth0 already $GUEST_ADDR (boot DHCP via netdde)"
 else
     ifdown eth0 2>/dev/null
     ifup eth0 2>&1
     echo "ifup eth0 rc=$?"
     sleep 2
 fi
-if ! ifconfig eth0 2>/dev/null | grep -q 'inet 10.0.2.15'; then
-    echo "WARN: eth0 has no 10.0.2.15; device and server state:"
+if ! ifconfig eth0 2>/dev/null | grep -q "inet $GUEST_ADDR"; then
+    echo "WARN: eth0 has no $GUEST_ADDR; device and server state:"
     ifconfig -a 2>&1 || true
     ls -l /dev/eth* 2>&1 || true
     showtrans /servers/socket/2 2>&1 || true
     if ! showtrans /servers/socket/2 2>&1 | grep -q .; then
         echo "WARN: socket server free; last resort: static pfinet"
         settrans -a /servers/socket/2 /hurd/pfinet \
-            -i /dev/eth0 -a 10.0.2.15 -m 255.255.255.0 -g 10.0.2.2 2>&1
+            -i /dev/eth0 -a "$GUEST_ADDR" -m "$GUEST_MASK" -g "$GUEST_GW" 2>&1
         echo "pfinet attach rc=$?"
         sleep 2
     else
@@ -87,19 +93,19 @@ if getent hosts deb.debian.org >/dev/null 2>&1; then
 else
     # UDP may be broken through netdde/slirp; force DNS over TCP:
     rm -f /etc/resolv.conf
-    printf 'nameserver 10.0.2.3\noptions usevc timeout:2 attempts:2\n' > /etc/resolv.conf
+    printf 'nameserver %s\noptions usevc timeout:2 attempts:2\n' "$GUEST_DNS" > /etc/resolv.conf
     if getent hosts deb.debian.org >/dev/null 2>&1; then
         echo "DNS-OK-TCP"
     else
         echo "DNS-KO"
     fi
 fi
-if timeout 5 bash -c 'exec 3<>/dev/tcp/10.0.2.3/53' 2>/dev/null; then
-    echo "TCP-DNS-10.0.2.3-OK"
+if timeout 5 bash -c "exec 3<>/dev/tcp/$GUEST_DNS/53" 2>/dev/null; then
+    echo "TCP-DNS-$GUEST_DNS-OK"
 else
-    echo "TCP-DNS-10.0.2.3-KO"
+    echo "TCP-DNS-$GUEST_DNS-KO"
 fi
-ping -c1 -W2 10.0.2.2 2>&1 | tail -1
+ping -c1 -W2 "$GUEST_GW" 2>&1 | tail -1
 if wget -q -O /dev/null http://deb.debian.org/ 2>/dev/null; then
     echo "HTTP-OK"
 else
