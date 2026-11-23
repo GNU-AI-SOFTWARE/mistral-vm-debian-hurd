@@ -34,7 +34,9 @@ Usage:
     hurd_vm.py <image> <script.sh>      # boot, then run the script
     options: --ram 2G   guest memory (default 1G)
              --fresh    rebuild the CI copy even if cached
-             --keep     keep the VM alive after the script
+             --keep     keep the VM alive after the script (QEMU is
+                                   started in its own session, so it also
+                                   survives the driver and the terminal)
              --root-pass PASSWORD   the image's root password
                                    (only needed for custom images)
              --set-root-pass PW     set root's password to PW on the
@@ -464,9 +466,17 @@ class SerialVM:
             # separate arguments, otherwise QEMU says "invalid option".
             accel = ["-enable-kvm"] if os.path.exists("/dev/kvm") else ["-accel", "tcg"]
         with open(QEMU_LOG, "wb") as errf:
+            # start_new_session + stdin=DEVNULL: with --keep the driver
+            # exits and leaves QEMU running; a new session makes that
+            # QEMU immune to the SIGHUP sent to the terminal's process
+            # group when the invoking shell or session ends, so the
+            # SSH hostfwd stays up instead of dying with "connection
+            # refused".
             self.proc = subprocess.Popen(self._base_cmd(accel),
+                                         stdin=subprocess.DEVNULL,
                                          stdout=subprocess.DEVNULL,
-                                         stderr=errf)
+                                         stderr=errf,
+                                         start_new_session=True)
             deadline = time.time() + 30
             while time.time() < deadline:
                 try:
