@@ -772,9 +772,12 @@ def run(src, script, opts):
             vm.send("mkdir -p /run/sshd; ssh-keygen -A >/dev/null 2>&1; "
                     "service ssh start >/dev/null 2>&1 || /usr/sbin/sshd; "
                     "sleep 1; pgrep -l sshd; "
-                    "ifconfig eth0 2>/dev/null | grep -E 'eth0|inet ' | head -3; "
-                    "bash -c 'exec 3<>/dev/tcp/127.0.0.1/22 && head -c 30 <&3'; "
-                    "echo; echo SSHD-RC=$?")
+                    "ifconfig -a 2>/dev/null | grep -E '^[a-z]|inet ' | head -8; "
+                    "ls -l /dev/eth* 2>&1 | head -3; "
+                    "showtrans /servers/socket/2 2>&1 | head -2; "
+                    "bash -c 'exec 3<>/dev/tcp/127.0.0.1/22 && head -c 30 <&3'; echo; "
+                    "bash -c 'exec 3<>/dev/tcp/${HURD_VM_GUEST_ADDR:-10.0.2.15}/22 "
+                    "&& head -c 30 <&3'; echo; echo SSHD-RC=$?")
             try:
                 if vm.wait_for(r"SSHD-RC=\d+", 90):
                     print("[vm] guest sshd check (serial tail):")
