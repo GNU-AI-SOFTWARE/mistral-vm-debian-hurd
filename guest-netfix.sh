@@ -63,6 +63,19 @@ sleep 2
 ifconfig -a
 showtrans /servers/socket/2 2>&1 || true
 
+# slirp's UDP DNS (10.0.2.3) is often broken on Hurd; pin the hosts
+# the tests touch (resolved on the host beforehand) so getent, wget
+# and apt still work when the resolver fails:
+pin() {
+    _ip=$1 _name=$2
+    grep -qw "$_name" /etc/hosts 2>/dev/null || echo "$_ip $_name" >> /etc/hosts
+}
+pin 194.71.11.165 deb.debian.org
+pin 194.71.11.165 cdimage.debian.org
+pin 18.239.50.80 huggingface.co
+pin 18.239.105.46 datasets-server.huggingface.co
+pin 140.82.121.4 github.com
+
 i=0
 until getent hosts deb.debian.org >/dev/null 2>&1; do
     i=$((i+1))
