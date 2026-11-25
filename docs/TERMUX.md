@@ -152,6 +152,21 @@ hors du périmètre de cette VM.
   permettent de builder hors-ligne malgré tout.
 - **Timeout au login sur téléphone lent** : augmentez
   `HURD_VM_TIMEOUT_LOGIN` (section 3).
+- **`test_pg.sh` en FAIL dans l'invité** (data-base-translator,
+  orchestrator-translator) : deux pièges Hurd quand la session est
+  `root` et `postgresql` installé —
+  1. `initdb` refuse de tourner en root : lancer le test en
+     `postgres` (`runuser -u postgres -- sh -c 'cd <arbre> && make
+     check TESTS=test_pg.sh'`) ;
+  2. `getcwd()` sur Hurd exige la **lecture** sur chaque répertoire
+     parent : `/root` en 700/711 fait échouer `make` avec
+     `getcwd: Permission denied` — soit `chmod 755 /root /root/src`,
+     soit copier les deux arbres côte à côte dans `/tmp`
+     (`cp -a /root/src/data-base-translator /root/src/orchestrator-translator /tmp/pgtest/ && chown -R postgres:postgres /tmp/pgtest`)
+     car orchestrator attend le binaire voisin
+     `../../data-base-translator/src/db-translator(-repl)`.
+  Sans serveur PostgreSQL installé, le test passe en SKIP (77) : la
+  suite reste verte sans ces réglages.
 
 Claire Ivanenka — claire@gnu-ai.org
 GNU AI — https://gnu-ai.org
