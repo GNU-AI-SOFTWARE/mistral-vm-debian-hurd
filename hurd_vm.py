@@ -34,7 +34,15 @@ Usage:
     hurd_vm.py <image> <script.sh>      # boot, then run the script
     options: --ram 2G   guest memory (default 1G)
              --fresh    rebuild the CI copy even if cached
-             --keep     keep the VM alive after the script
+             --keep     keep the VM alive after the script (QEMU is
+                                   started in its own session, so it also
+                                   survives the driver and the terminal;
+                                   the guest sshd is started before exit)
+             --ssh-key FILE
+                                   authorize FILE (*.pub) for root SSH
+                                   logins on the CI copy; the host then
+                                   connects with:
+                                   ssh -i <private key> -p 2222 root@127.0.0.1
              --root-pass PASSWORD   the image's root password
                                    (only needed for custom images)
              --set-root-pass PW     set root's password to PW on the
@@ -50,6 +58,27 @@ host forward to its SSH port.  The prepared CI copy is kept between
 runs (named <image>.ci.img next to this file): packages installed
 by earlier scripts stay installed; pass --fresh to rebuild it.
 
+Environment variables:
+    HURD_VM_SSH_PORT  host port forwarded to guest 22 (default 2222)
+    HURD_VM_SSH_BIND  host address the forward binds to (default
+                      127.0.0.1; set your LAN IP, e.g. 192.168.1.50, to
+                      let other machines on the LAN reach the VM --
+                      root SSH is then exposed to that network, so use
+                      --ssh-key and keep the root password strong)
+    HURD_VM_NET       slirp subnet, e.g. 192.168.1.0/24 (default
+                      10.0.2.0/24): the guest gets <net>.15 (pinned via
+                      dhcpstart), gateway <net>.2, DNS <net>.3
+    HURD_VM_TAP       tap interface name for bridged networking: the
+                      guest then has a REAL LAN address and is reachable
+                      directly at it (ssh root@<guest-ip>, no hostfwd).
+                      Create the tap first:
+                        sudo ip tuntap add dev hurdvm0 mode tap user $USER
+                        sudo ip link set hurdvm0 up
+                      and enslave it to your LAN bridge if any
+    HURD_VM_GW        override the gateway exported to the guest
+                      (bridged mode: the real LAN gateway)
+    HURD_VM_DNS       override the DNS exported to the guest
+
 Requires on the host: qemu-system-x86 (KVM used when /dev/kvm is
 available), e2fsprogs (e2fsck, debugfs), python3.  The guest is
 given 1 GB of RAM by default: it boots fine with that, and on a
@@ -58,6 +87,7 @@ before even SeaBIOS runs.
 """
 
 import hashlib
+import ipaddress
 import os
 import re
 import secrets
@@ -191,7 +221,7 @@ def patch_grub_cfg(text):
     return "".join(out), patched
 
 
-def prepare_ci_image(src, fresh=False, root_pass=None):
+def prepare_ci_image(src, fresh=False, root_pass=None, ssh_key=None):
     """Create (or reuse) the bootable CI copy of the image.
 
     The marker file besides the copy holds two lines: the source
@@ -205,11 +235,19 @@ def prepare_ci_image(src, fresh=False, root_pass=None):
     to that password instead of being cleared, and sshd is allowed
     root password logins; the marker fingerprint then includes a
     hash of the password, so changing it rebuilds the copy.
+
+    With ssh_key set, that public key is installed as
+    /root/.ssh/authorized_keys for root key logins; the marker
+    fingerprint then also includes a hash of the key, so changing
+    either rebuilds the copy.
     """
     marker = CI_IMAGE + ".ready"
     src_stat = os.stat(src)
     tag = "nopass" if root_pass is None else \
         "pass-" + hashlib.sha256(root_pass.encode()).hexdigest()[:12]
+    if ssh_key is not None:
+        with open(ssh_key, "rb") as f:
+            tag += "-key-" + hashlib.sha256(f.read()).hexdigest()[:12]
     fingerprint = f"{os.path.getsize(src)}:{int(src_stat.st_mtime)}:{tag}"
     e2fsck = find_tool("e2fsck")
     debugfs = find_tool("debugfs")
@@ -311,6 +349,14 @@ def prepare_ci_image(src, fresh=False, root_pass=None):
         sys.exit("[vm] FAIL: the grub.cfg patch did not land in the "
                  "image\n" + r.stdout[-2000:])
 
+    # A stale /run/network/ifstate shipped in the image makes the boot's
+    # ifup skip eth0 ("already configured") while netdde never runs, so
+    # the guest gets no 10.0.2.15 and the SSH hostfwd answers "Connection
+    # reset".  Drop the file from the CI copy so every boot re-runs
+    # ifup/DHCP.  debugfs rm on a missing file only prints an error.
+    subprocess.run([debugfs, "-w", "-R", "rm /run/network/ifstate", part],
+                   capture_output=True)
+
     # The driver logs in as root: that is its CI contract.  By
     # default the older preinstalled images shipped an empty root
     # password, the newer ones do not - so the CI COPY (never the
@@ -362,6 +408,39 @@ def prepare_ci_image(src, fresh=False, root_pass=None):
         else:
             print("[vm] note: no /etc/ssh/sshd_config in the image; "
                   "root SSH password logins may stay disabled")
+
+    if ssh_key is not None:
+        # Root SSH key login: install the public key as
+        # /root/.ssh/authorized_keys (dir 0700, file 0600) with debugfs,
+        # like the shadow/sshd patches above.  PubkeyAuthentication is
+        # on by default; the header above allows root logins.
+        with open(ssh_key) as f:
+            pub = f.read().strip()
+        if not pub or " " not in pub:
+            sys.exit(f"[vm] FAIL: {ssh_key} does not look like a public key")
+        key_host = part + ".authorized_keys"
+        cmds_key = part + ".ssh.cmds"
+        with open(key_host, "w") as f:
+            f.write(pub + "\n")
+        with open(cmds_key, "w") as f:
+            f.write("cd /root\n"
+                    "mkdir .ssh\n"
+                    "cd .ssh\n"
+                    "rm authorized_keys\n"
+                    f"write {key_host} authorized_keys\n"
+                    "sif authorized_keys mode 0100600\n"
+                    "sif /root/.ssh mode 040700\n")
+        subprocess.run([debugfs, "-w", "-f", cmds_key, part],
+                       check=True, capture_output=True)
+        r = subprocess.run([debugfs, "-R", "cat /root/.ssh/authorized_keys",
+                            part], capture_output=True, text=True)
+        os.unlink(key_host)
+        os.unlink(cmds_key)
+        if pub not in r.stdout:
+            sys.exit("[vm] FAIL: the authorized_keys patch did not land "
+                     "in the image:\n" + r.stdout[-500:])
+        print(f"[vm] ssh key {os.path.basename(ssh_key)} authorized "
+              "for root on the CI copy")
 
     subprocess.run(["dd", f"if={part}", f"of={CI_IMAGE}",
                     "bs=512", f"seek={lba}", "conv=notrunc",
@@ -417,6 +496,16 @@ def find_running_vms(image):
 # ------------------------------------------------------------------
 
 
+def slirp_addrs(net):
+    """slirp conventions for -net user,net=CIDR: guest <base>.15,
+    gateway <base>.2, DNS <base>.3, netmask from the CIDR."""
+    n = ipaddress.ip_network(net, strict=False)
+    base = int(n.network_address)
+    return (str(ipaddress.ip_address(base + 15)), str(n.netmask),
+            str(ipaddress.ip_address(base + 2)),
+            str(ipaddress.ip_address(base + 3)))
+
+
 class SerialVM:
     """QEMU with the serial line on a local TCP socket (raw bytes,
     not Telnet: the telnet chardev's IAC negotiation proved flaky).
@@ -441,15 +530,51 @@ class SerialVM:
         # Boot the disk itself: the image's own GRUB, with the
         # patched grub.cfg, handles everything from there.
         # The host port forwarded to the guest SSH is configurable:
-        # two concurrent VMs cannot share it (HURD_VM_SSH_PORT).
+        # two concurrent VMs cannot share it (HURD_VM_SSH_PORT), and it
+        # binds to loopback unless HURD_VM_SSH_BIND says otherwise.
+        # HURD_VM_NET overrides the slirp subnet (e.g. 192.168.1.0/24).
+        # HURD_VM_TAP=<ifname> switches to bridged networking: the guest
+        # gets a REAL LAN address (pinned by the exported HURD_VM_GUEST_*
+        # and the static fallback in the guest scripts) and is reachable
+        # directly at that IP -- no hostfwd in this mode.  The tap
+        # interface must exist beforehand, e.g.:
+        #   sudo ip tuntap add dev hurdvm0 mode tap user $USER
+        #   sudo ip link set hurdvm0 up
+        # and be added to the LAN bridge (see README).
+        tap = os.environ.get("HURD_VM_TAP", "")
+        if tap:
+            return [
+                "qemu-system-x86_64", *accel, "-m", self.memory,
+                "-smp", "2", "-no-reboot",
+                "-drive", f"file={self.disk},cache=writeback,format=raw",
+                "-netdev", f"tap,id=net0,ifname={tap},script=no,downscript=no",
+                "-device", "e1000,netdev=net0",
+                "-display", "none",
+                "-serial", f"tcp:127.0.0.1:{self.port},server,nowait",
+            ]
         ssh_port = os.environ.get("HURD_VM_SSH_PORT", "2222")
+        ssh_bind = os.environ.get("HURD_VM_SSH_BIND", "127.0.0.1")
+        net = os.environ.get("HURD_VM_NET", "")
+        netarg = ""
+        if net:
+            # pin the guest address explicitly (slirp dhcpstart = base+15)
+            addr = slirp_addrs(net)[0]
+            netarg = f",net={net},dhcpstart={addr}"
+        # Always forward on loopback; with HURD_VM_SSH_BIND set to
+        # another host address, add a second forward on that address
+        # (QEMU allows several hostfwd on different bind addresses).
+        hostfwd = f"hostfwd=tcp:127.0.0.1:{ssh_port}-:22"
+        if ssh_bind not in ("", "127.0.0.1", "localhost"):
+            hostfwd += f",hostfwd=tcp:{ssh_bind}:{ssh_port}-:22"
         return [
             "qemu-system-x86_64", *accel, "-m", self.memory,
             # Two vCPUs: the guests compile (the Hurd, Mach) and a
             # single core makes every build painfully slow.
             "-smp", "2", "-no-reboot",
-            "-drive", f"file={self.disk},cache=writeback",
-            "-net", f"user,hostfwd=tcp:127.0.0.1:{ssh_port}-:22",
+            # format=raw: silence QEMU's probing warning and lift the
+            # block-0 write restriction it imposes on raw images
+            "-drive", f"file={self.disk},cache=writeback,format=raw",
+            "-net", f"user,{hostfwd}{netarg}",
             "-net", "nic,model=e1000",
             "-display", "none",
             "-serial", f"tcp:127.0.0.1:{self.port},server,nowait",
@@ -464,9 +589,17 @@ class SerialVM:
             # separate arguments, otherwise QEMU says "invalid option".
             accel = ["-enable-kvm"] if os.path.exists("/dev/kvm") else ["-accel", "tcg"]
         with open(QEMU_LOG, "wb") as errf:
+            # start_new_session + stdin=DEVNULL: with --keep the driver
+            # exits and leaves QEMU running; a new session makes that
+            # QEMU immune to the SIGHUP sent to the terminal's process
+            # group when the invoking shell or session ends, so the
+            # SSH hostfwd stays up instead of dying with "connection
+            # refused".
             self.proc = subprocess.Popen(self._base_cmd(accel),
+                                         stdin=subprocess.DEVNULL,
                                          stdout=subprocess.DEVNULL,
-                                         stderr=errf)
+                                         stderr=errf,
+                                         start_new_session=True)
             deadline = time.time() + 30
             while time.time() < deadline:
                 try:
@@ -493,6 +626,12 @@ class SerialVM:
                                    if pids else "unknown pid")
                                 + " is using " + self.disk
                                 + "; close it first")
+                        if "/dev/net/tun" in reason:
+                            print("[vm] hint: HURD_VM_TAP interface not usable by this "
+                                  "user.  Either run the driver with sudo, or create a "
+                                  "user-owned tap and bridge it:\n"
+                                  "  sudo ip tuntap add dev <name> mode tap user $USER\n"
+                                  "  sudo ip link set <name> up")
                         raise RuntimeError("QEMU exited early:\n" + reason)
                     time.sleep(0.5)
             raise RuntimeError("serial port never came up:\n" + self._qemu_tail())
@@ -543,7 +682,7 @@ class SerialVM:
 
 def parse_args(argv):
     opts = {"ram": "1G", "fresh": False, "keep": False, "root_pass": None,
-            "set_root_pass": None}
+            "set_root_pass": None, "ssh_key": None}
     rest = []
     i = 0
     while i < len(argv):
@@ -561,6 +700,9 @@ def parse_args(argv):
         elif a == "--set-root-pass":
             i += 1
             opts["set_root_pass"] = argv[i]
+        elif a == "--ssh-key":
+            i += 1
+            opts["ssh_key"] = argv[i]
         else:
             rest.append(a)
         i += 1
@@ -576,7 +718,8 @@ def run(src, script, opts):
         # The driver logs in over the serial line with the password it
         # just set on the CI copy.
         opts["root_pass"] = opts["set_root_pass"]
-    disk = prepare_ci_image(src, opts["fresh"], root_pass=opts["set_root_pass"])
+    disk = prepare_ci_image(src, opts["fresh"], root_pass=opts["set_root_pass"],
+                            ssh_key=opts["ssh_key"])
     marker = disk + ".ready"
 
     # From now on the copy is "dirty" until the guest has powered
@@ -611,6 +754,24 @@ def run(src, script, opts):
         if not vm.wait_for(r"root@|# ", 120):
             print("[vm] FAIL: no shell prompt after login")
             return 1
+
+        # With a custom slirp subnet (HURD_VM_NET=192.168.1.0/24), export
+        # the matching guest address/gateway/DNS so the guest scripts
+        # (guest_net in guest-inference.sh, guest-netfix.sh) use them
+        # instead of the 10.0.2.x defaults.
+        net = os.environ.get("HURD_VM_NET")
+        if net:
+            addr, mask, gw, dns = slirp_addrs(net)
+            # in bridged mode (HURD_VM_TAP) the gateway/DNS are the real
+            # LAN ones, not the slirp .2/.3: allow host-side override
+            gw = os.environ.get("HURD_VM_GW", gw)
+            dns = os.environ.get("HURD_VM_DNS", dns)
+            mode = "tap" if os.environ.get("HURD_VM_TAP") else "slirp"
+            vm.send("export HURD_VM_GUEST_ADDR=%s HURD_VM_GUEST_MASK=%s "
+                    "HURD_VM_GUEST_GW=%s HURD_VM_GUEST_DNS=%s HURD_VM_MODE=%s"
+                    % (addr, mask, gw, dns, mode))
+            time.sleep(1)
+            vm.read_some(1)
 
         if script is None:
             print("[vm] interactive boot complete")
@@ -648,6 +809,46 @@ def run(src, script, opts):
                 m = re.search(rb"GUESTRC=(\d+)", vm.log)
                 rc = 0 if int(m.group(1)) == 0 else 1
             print(vm.log.decode("latin-1", "replace")[-4000:])
+        if opts["keep"]:
+            # The serial TCP socket closes when this driver exits, so the
+            # SSH hostfwd is the only way back into a kept VM: bring the
+            # guest sshd up and verify it answers locally before leaving
+            # (sshd down -> "Connection closed" on the host port; eth0
+            # unconfigured -> "Connection reset" at kex time).
+            vm.send(
+                "mkdir -p /run/sshd; ssh-keygen -A >/dev/null 2>&1; "
+                "pgrep -x sshd >/dev/null 2>&1 "
+                "|| { service ssh start >/dev/null 2>&1 || /usr/sbin/sshd; sleep 1; }; "
+                "pgrep -l sshd; "
+                "ifconfig -a 2>/dev/null | grep -E '^[a-z]|inet ' | head -8; "
+                "ls -l /dev/eth* 2>&1 | head -3; "
+                "showtrans /servers/socket/2 2>&1 | head -2; "
+                "(netstat -ltn 2>/dev/null || cat /proc/net/tcp /proc/net/tcp6 "
+                "2>/dev/null) | head -8; "
+                # the hostfwd targets guest IPv4 :22; if sshd only listens
+                # on IPv6 (or not at all), restart it bound to 0.0.0.0
+                "if ! netstat -ltn 2>/dev/null | grep -q ':22 '; then "
+                "echo 'WARN: no IPv4 :22 listener; restart sshd with "
+                "ListenAddress=0.0.0.0'; "
+                "pkill -x sshd 2>/dev/null || true; sleep 1; "
+                "/usr/sbin/sshd -o ListenAddress=0.0.0.0 2>&1 || true; sleep 1; "
+                "fi; "
+                "netstat -ltn 2>/dev/null | grep ':22 ' || true; "
+                "bash -c 'exec 3<>/dev/tcp/127.0.0.1/22 && head -c 30 <&3'; echo; "
+                "bash -c 'exec 3<>/dev/tcp/${HURD_VM_GUEST_ADDR:-10.0.2.15}/22 "
+                "&& head -c 30 <&3'; echo; "
+                "echo SSHD-RC=$?")
+            try:
+                if vm.wait_for(r"SSHD-RC=\d+", 90):
+                    print("[vm] guest sshd check (serial tail):")
+                    print(vm.log.decode("latin-1", "replace")[-500:])
+                    key = opts.get("ssh_key")
+                    hint = (" -i " + key) if key else ""
+                    print("[vm] kept VM reachable: ssh" + hint + " -p "
+                          + os.environ.get("HURD_VM_SSH_PORT", "2222")
+                          + " root@127.0.0.1")
+            except RuntimeError:
+                print("[vm] warning: the guest sshd check did not answer")
         if not opts["keep"]:
             # Shut the guest down cleanly and WAIT for it, even when
             # the guest script failed: killing QEMU mid-shutdown
