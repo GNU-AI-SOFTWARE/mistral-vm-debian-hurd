@@ -66,8 +66,18 @@ Environment variables:
                       root SSH is then exposed to that network, so use
                       --ssh-key and keep the root password strong)
     HURD_VM_NET       slirp subnet, e.g. 192.168.1.0/24 (default
-                      10.0.2.0/24): the guest gets <net>.15, gateway
-                      <net>.2, DNS <net>.3 via DHCP at boot
+                      10.0.2.0/24): the guest gets <net>.15 (pinned via
+                      dhcpstart), gateway <net>.2, DNS <net>.3
+    HURD_VM_TAP       tap interface name for bridged networking: the
+                      guest then has a REAL LAN address and is reachable
+                      directly at it (ssh root@<guest-ip>, no hostfwd).
+                      Create the tap first:
+                        sudo ip tuntap add dev hurdvm0 mode tap user $USER
+                        sudo ip link set hurdvm0 up
+                      and enslave it to your LAN bridge if any
+    HURD_VM_GW        override the gateway exported to the guest
+                      (bridged mode: the real LAN gateway)
+    HURD_VM_DNS       override the DNS exported to the guest
 
 Requires on the host: qemu-system-x86 (KVM used when /dev/kvm is
 available), e2fsprogs (e2fsck, debugfs), python3.  The guest is
@@ -523,6 +533,25 @@ class SerialVM:
         # two concurrent VMs cannot share it (HURD_VM_SSH_PORT), and it
         # binds to loopback unless HURD_VM_SSH_BIND says otherwise.
         # HURD_VM_NET overrides the slirp subnet (e.g. 192.168.1.0/24).
+        # HURD_VM_TAP=<ifname> switches to bridged networking: the guest
+        # gets a REAL LAN address (pinned by the exported HURD_VM_GUEST_*
+        # and the static fallback in the guest scripts) and is reachable
+        # directly at that IP -- no hostfwd in this mode.  The tap
+        # interface must exist beforehand, e.g.:
+        #   sudo ip tuntap add dev hurdvm0 mode tap user $USER
+        #   sudo ip link set hurdvm0 up
+        # and be added to the LAN bridge (see README).
+        tap = os.environ.get("HURD_VM_TAP", "")
+        if tap:
+            return [
+                "qemu-system-x86_64", *accel, "-m", self.memory,
+                "-smp", "2", "-no-reboot",
+                "-drive", f"file={self.disk},cache=writeback,format=raw",
+                "-netdev", f"tap,id=net0,ifname={tap},script=no,downscript=no",
+                "-device", "e1000,netdev=net0",
+                "-display", "none",
+                "-serial", f"tcp:127.0.0.1:{self.port},server,nowait",
+            ]
         ssh_port = os.environ.get("HURD_VM_SSH_PORT", "2222")
         ssh_bind = os.environ.get("HURD_VM_SSH_BIND", "127.0.0.1")
         net = os.environ.get("HURD_VM_NET", "")
@@ -727,6 +756,10 @@ def run(src, script, opts):
         net = os.environ.get("HURD_VM_NET")
         if net:
             addr, mask, gw, dns = slirp_addrs(net)
+            # in bridged mode (HURD_VM_TAP) the gateway/DNS are the real
+            # LAN ones, not the slirp .2/.3: allow host-side override
+            gw = os.environ.get("HURD_VM_GW", gw)
+            dns = os.environ.get("HURD_VM_DNS", dns)
             vm.send("export HURD_VM_GUEST_ADDR=%s HURD_VM_GUEST_MASK=%s "
                     "HURD_VM_GUEST_GW=%s HURD_VM_GUEST_DNS=%s"
                     % (addr, mask, gw, dns))
