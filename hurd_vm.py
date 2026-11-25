@@ -760,9 +760,10 @@ def run(src, script, opts):
             # LAN ones, not the slirp .2/.3: allow host-side override
             gw = os.environ.get("HURD_VM_GW", gw)
             dns = os.environ.get("HURD_VM_DNS", dns)
+            mode = "tap" if os.environ.get("HURD_VM_TAP") else "slirp"
             vm.send("export HURD_VM_GUEST_ADDR=%s HURD_VM_GUEST_MASK=%s "
-                    "HURD_VM_GUEST_GW=%s HURD_VM_GUEST_DNS=%s"
-                    % (addr, mask, gw, dns))
+                    "HURD_VM_GUEST_GW=%s HURD_VM_GUEST_DNS=%s HURD_VM_MODE=%s"
+                    % (addr, mask, gw, dns, mode))
             time.sleep(1)
             vm.read_some(1)
 
