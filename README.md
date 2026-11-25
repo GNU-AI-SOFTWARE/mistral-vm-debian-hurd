@@ -42,6 +42,7 @@ inside the guest.
 | `hurd_vm.py`    | The driver: prepares the CI copy of the image, boots QEMU, drives the serial console, runs your script in the guest |
 | `guest-httpfs.sh` | Example guest script: build and test [httpfs-translator](https://github.com/gnu-ai/httpfs-translator) inside the VM |
 | `guest-all-translators.sh` | Guest script: build + `make check` of **all five** GNU-AI-SOFTWARE translators in one run (also the Termux/Android entry point, see [docs/TERMUX.md](docs/TERMUX.md)) |
+| `docs/INSTALL-DEBIAN.md` | Full install guide: Debian Linux host + GNU/Hurd amd64 VM — build all five translators, mount and test the stack in the guest (binary names, `--conninfo`/`--neuron` flags, Hurd gotchas) |
 | `docs/TERMUX.md` | Run this VM under QEMU inside Termux on Android (TCG, no KVM) and recompile the whole stack there |
 | `guest-netfix.sh` | Guest network repair/diagnostic (ifup/DHCP first, static fallback, verbose state dump) |
 | `inject-src.sh` | Inject a file into `/root/` of the CI image offline (debugfs), no VM boot needed |
@@ -170,6 +171,10 @@ $ python3 hurd_vm.py debian-hurd-amd64-20260314.img guest-httpfs.sh
 ```console
 $ python3 hurd_vm.py debian-hurd-amd64-20260314.img guest-all-translators.sh --ram 2G
 ```
+
+Step-by-step install on a Debian Linux host (requirements, image,
+first run, then mounting and testing the stack inside the guest):
+[docs/INSTALL-DEBIAN.md](docs/INSTALL-DEBIAN.md).
 
 On Android, install QEMU inside Termux (`pkg install
 qemu-system-x86-64-headless python e2fsprogs xz-utils`; on 32-bit ARM
