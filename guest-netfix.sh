@@ -41,7 +41,14 @@ mkdir -p /run/network 2>/dev/null
 # leaving the guest with no network at all (the QEMU hostfwd then
 # answers "Connection reset").  pfinet is a last resort, only on a
 # free socket server.
-if ifconfig eth0 2>/dev/null | grep -q "inet $GUEST_ADDR"; then
+if [ "${HURD_VM_MODE:-slirp}" = "tap" ]; then
+    # bridged mode (HURD_VM_TAP on the host): no slirp DHCP, pin the
+    # LAN address directly
+    echo "tap mode: static $GUEST_ADDR gw $GUEST_GW dns $GUEST_DNS"
+    ifconfig eth0 "$GUEST_ADDR" netmask "$GUEST_MASK" up 2>&1 || true
+    route add default "$GUEST_GW" 2>&1 || true
+    sleep 1
+elif ifconfig eth0 2>/dev/null | grep -q "inet $GUEST_ADDR"; then
     echo "eth0 already $GUEST_ADDR (boot DHCP via netdde)"
 else
     ifdown eth0 2>/dev/null || true
