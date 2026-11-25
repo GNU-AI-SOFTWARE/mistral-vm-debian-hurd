@@ -171,8 +171,9 @@ $ python3 hurd_vm.py debian-hurd-amd64-20260314.img guest-httpfs.sh
 $ python3 hurd_vm.py debian-hurd-amd64-20260314.img guest-all-translators.sh --ram 2G
 ```
 
-On Android, install QEMU inside Termux (`pkg install qemu-system-x86-64
-python e2fsprogs xz-utils`); with no `/dev/kvm` the driver
+On Android, install QEMU inside Termux (`pkg install
+qemu-system-x86-64-headless python e2fsprogs xz-utils`; on 32-bit ARM
+also `pkg install tur-repo` first); with no `/dev/kvm` the driver
 automatically uses TCG.  Slow devices: raise `HURD_VM_TIMEOUT_LOGIN` /
 `HURD_VM_TIMEOUT_SCRIPT`.  Full walkthrough:
 [docs/TERMUX.md](docs/TERMUX.md).

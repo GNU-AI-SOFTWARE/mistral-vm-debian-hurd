@@ -27,11 +27,22 @@ Android (Termux)  ── QEMU (TCG, sans KVM)  ──▶  Debian GNU/Hurd  ─�
 
 ```console
 $ pkg update
-$ pkg install qemu-system-x86-64 python e2fsprogs xz-utils tar wget git
+$ pkg install qemu-system-x86-64-headless python e2fsprogs xz-utils tar wget git
 $ termux-setup-storage        # autorise l'accès au stockage partagé
+$ qemu-system-x86_64 --version   # vérifie le binaire (installé dans $PREFIX/bin)
 ```
 
-- `qemu-system-x86-64` : la machine virtuelle (émulation pure, TCG) ;
+- `qemu-system-x86-64-headless` : la machine virtuelle. C'est le nom
+  actuel du paquet dans le dépôt principal Termux (`qemu-system-x86-64`
+  n'existe plus comme paquet installable ; la variante graphique vit
+  dans le dépôt x11).  Le paquet headless installe bien le binaire
+  **`qemu-system-x86_64`** dans `$PREFIX/bin` — c'est exactement ce que
+  `hurd_vm.py` appelle — compilé sans SDL/GTK, avec slirp (réseau
+  user-mode) inclus : parfait pour `-display none`.  Émulation pure
+  (TCG).  **Attention architecture** : sur ARM 32 bits
+  (`uname -m` renvoie `armv7l`/`armv8l`) le paquet est exclu du dépôt
+  officiel ; il faut alors activer TUR :
+  `pkg install tur-repo && pkg update && pkg install qemu-system-x86-64-headless` ;
 - `python` : le driver `hurd_vm.py` ;
 - `e2fsprogs` : `e2fsck`/`debugfs`, utilisés hors-ligne pour préparer la
   copie CI de l'image (le driver les cherche aussi dans `/sbin`) ;
