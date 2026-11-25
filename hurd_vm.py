@@ -526,7 +526,11 @@ class SerialVM:
         ssh_port = os.environ.get("HURD_VM_SSH_PORT", "2222")
         ssh_bind = os.environ.get("HURD_VM_SSH_BIND", "127.0.0.1")
         net = os.environ.get("HURD_VM_NET", "")
-        netarg = f",net={net}" if net else ""
+        netarg = ""
+        if net:
+            # pin the guest address explicitly (slirp dhcpstart = base+15)
+            addr = slirp_addrs(net)[0]
+            netarg = f",net={net},dhcpstart={addr}"
         # Always forward on loopback; with HURD_VM_SSH_BIND set to
         # another host address, add a second forward on that address
         # (QEMU allows several hostfwd on different bind addresses).
