@@ -41,6 +41,8 @@ inside the guest.
 |-----------------|------|
 | `hurd_vm.py`    | The driver: prepares the CI copy of the image, boots QEMU, drives the serial console, runs your script in the guest |
 | `guest-httpfs.sh` | Example guest script: build and test [httpfs-translator](https://github.com/gnu-ai/httpfs-translator) inside the VM |
+| `guest-all-translators.sh` | Guest script: build + `make check` of **all five** GNU-AI-SOFTWARE translators in one run (also the Termux/Android entry point, see [docs/TERMUX.md](docs/TERMUX.md)) |
+| `docs/TERMUX.md` | Run this VM under QEMU inside Termux on Android (TCG, no KVM) and recompile the whole stack there |
 | `guest-netfix.sh` | Guest network repair/diagnostic (ifup/DHCP first, static fallback, verbose state dump) |
 | `inject-src.sh` | Inject a file into `/root/` of the CI image offline (debugfs), no VM boot needed |
 | `hurd-vm-clip.sh` | Dedicated host<->VM clipboard channel over ssh (`push`/`pull`/`show`) |
@@ -162,6 +164,18 @@ VM; in the guest, "paste" with `$(cat /root/.vmclipboard)`).
 ```console
 $ python3 hurd_vm.py debian-hurd-amd64-20260314.img guest-httpfs.sh
 ```
+
+### Example: recompile ALL the translators (also from Termux on Android)
+
+```console
+$ python3 hurd_vm.py debian-hurd-amd64-20260314.img guest-all-translators.sh --ram 2G
+```
+
+On Android, install QEMU inside Termux (`pkg install qemu-system-x86-64
+python e2fsprogs xz-utils`); with no `/dev/kvm` the driver
+automatically uses TCG.  Slow devices: raise `HURD_VM_TIMEOUT_LOGIN` /
+`HURD_VM_TIMEOUT_SCRIPT`.  Full walkthrough:
+[docs/TERMUX.md](docs/TERMUX.md).
 
 Or inline:
 
