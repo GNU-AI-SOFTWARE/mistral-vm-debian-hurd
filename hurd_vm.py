@@ -626,6 +626,12 @@ class SerialVM:
                                    if pids else "unknown pid")
                                 + " is using " + self.disk
                                 + "; close it first")
+                        if "/dev/net/tun" in reason:
+                            print("[vm] hint: HURD_VM_TAP interface not usable by this "
+                                  "user.  Either run the driver with sudo, or create a "
+                                  "user-owned tap and bridge it:\n"
+                                  "  sudo ip tuntap add dev <name> mode tap user $USER\n"
+                                  "  sudo ip link set <name> up")
                         raise RuntimeError("QEMU exited early:\n" + reason)
                     time.sleep(0.5)
             raise RuntimeError("serial port never came up:\n" + self._qemu_tail())
