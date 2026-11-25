@@ -41,6 +41,9 @@ inside the guest.
 |-----------------|------|
 | `hurd_vm.py`    | The driver: prepares the CI copy of the image, boots QEMU, drives the serial console, runs your script in the guest |
 | `guest-httpfs.sh` | Example guest script: build and test [httpfs-translator](https://github.com/gnu-ai/httpfs-translator) inside the VM |
+| `guest-netfix.sh` | Guest network repair/diagnostic (ifup/DHCP first, static fallback, verbose state dump) |
+| `inject-src.sh` | Inject a file into `/root/` of the CI image offline (debugfs), no VM boot needed |
+| `hurd-vm-clip.sh` | Dedicated host<->VM clipboard channel over ssh (`push`/`pull`/`show`) |
 
 ## Requirements (host)
 
@@ -68,10 +71,40 @@ $ python3 hurd_vm.py debian-hurd-amd64-20260314.img my-script.sh
 # Options:
 #   --ram 2G        guest memory (default 1G)
 #   --fresh         rebuild the CI copy even if cached
-#   --keep          keep the VM alive after the script
+#   --keep          keep the VM alive after the script: QEMU is started
+#                   in its own session (survives the driver and the
+#                   terminal hangup) and the guest sshd is started and
+#                   self-checked (listeners, banners) before the driver
+#                   exits, so `ssh -p 2222 root@127.0.0.1` works
 #   --root-pass PW  the image's root password (custom images)
 #   --set-root-pass PW  set root's password to PW on the CI copy
 #                       (and enable root password logins in sshd)
+#   --ssh-key FILE  authorize FILE (*.pub) for root key logins on the
+#                   CI copy (/root/.ssh/authorized_keys, via debugfs);
+#                   connect with: ssh -i <private key> -p 2222 root@127.0.0.1
+#
+# Environment variables:
+#   HURD_VM_SSH_PORT  host port forwarded to guest 22 (default 2222)
+#   HURD_VM_SSH_BIND  extra host address the forward binds to (default:
+#                     only 127.0.0.1; e.g. HURD_VM_SSH_BIND=10.106.74.184
+#                     also forwards on that IP for the LAN)
+#   HURD_VM_NET       slirp subnet, e.g. 10.106.74.0/24 (default
+#                     10.0.2.0/24); guest gets <net>.15 (pinned with
+#                     dhcpstart), gateway <net>.2, DNS <net>.3
+#   HURD_VM_TAP       tap interface name for bridged networking: the
+#                     guest gets a REAL LAN address (ssh it directly at
+#                     its IP, no hostfwd); create it first, e.g.
+#                       sudo ip link add link eth0 name hurdvm0 type macvtap mode bridge
+#                       sudo ip link set hurdvm0 up
+#                     and run the driver as root, or use a user-owned
+#                     tap: sudo ip tuntap add dev hurdvm0 mode tap user $USER
+#   HURD_VM_GW / HURD_VM_DNS  override the gateway/DNS exported to the
+#                     guest (bridged mode: the real LAN ones)
+#   HURD_VM_CI_IMAGE  boot a private CI copy instead of the shared one
+#
+# Rule of thumb: always pass the SAME --set-root-pass/--ssh-key on every
+# run -- the CI-copy reuse fingerprint includes their hashes, so changing
+# them rebuilds the copy (and loses injected files).
 ```
 
 On the first run the driver prepares a **CI copy** of the image
@@ -97,6 +130,32 @@ for CI.
 The guest has user-mode networking (`10.0.2.15`, gateway `10.0.2.2`,
 DNS `10.0.2.3`, host port 2222 forwarded to the guest SSH port), so
 `apt-get`, `git clone` etc. work inside the VM.
+
+Guest networking notes (learned the hard way):
+
+- the image's NIC is driven by **netdde**, started by `ifup` at boot
+  with DHCP from slirp; a stale `/run/network/ifstate` (shipped in the
+  image, also removed from the CI copy at prepare time) makes the boot
+  skip eth0.  `guest-netfix.sh` clears it and re-runs `ifup`, falls back
+  to a static `ifconfig eth0 <addr> up` + default route, then
+  `dhclient -1`, and only attaches `pfinet` as a last resort on a FREE
+  `/servers/socket/2` — never `settrans -fg` there: it would kill
+  netdde and remove `/dev/eth0` (the hostfwd then answers
+  "Connection reset");
+- slirp's UDP DNS (`10.0.2.3`) is often broken from Hurd: the guest
+  scripts pin `deb.debian.org`, `cdimage.debian.org`, `huggingface.co`,
+  `datasets-server.huggingface.co` and `github.com` in `/etc/hosts`;
+- sshd starts at boot but may listen only on IPv6; the `--keep`
+  self-check restarts it with `ListenAddress=0.0.0.0` when no IPv4 `:22`
+  listener exists;
+- with slirp, the guest IP is internal to QEMU and NOT routable from
+  the host/LAN: reach the VM via the host forward
+  (`ssh -p 2222 root@127.0.0.1`, or `root@<HURD_VM_SSH_BIND>` from the
+  LAN).  For the VM to have a real LAN IP, use `HURD_VM_TAP` (bridged).
+
+Clipboard between host and VM without pasting into the wrong window:
+`./hurd-vm-clip.sh push|pull|show` (xclip/xsel on the host, ssh to the
+VM; in the guest, "paste" with `$(cat /root/.vmclipboard)`).
 
 ### Example: build and test httpfs-translator on real Hurd
 
