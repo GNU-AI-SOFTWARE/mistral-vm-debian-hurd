@@ -173,6 +173,15 @@ placeholder `0.527026` → après `load`, `input 0.9,0.9` → `1.000000`,
 transformer n'y tient pas — les gros modèles passent par la retrieval
 `/db` + `/reply`.
 
+Pour convertir des données **texte** (ex. le `train.jsonl` HF du bucket,
+format `conversations` human/gpt) en `data.jsonl` vectoriel avant
+l'entraînement :
+
+```console
+python3 scripts/jsonl_to_nn_data.py --in /root/modeles/deepseek/data/train.jsonl --out /root/data.jsonl --dim 16 --out-dim 4
+python3 scripts/train_nn.py --data /root/data.jsonl --topology 16,32,4 --epochs 200 --out /root/modele.nn
+```
+
 ### 4.4 Orchestrateur
 
 ```console
