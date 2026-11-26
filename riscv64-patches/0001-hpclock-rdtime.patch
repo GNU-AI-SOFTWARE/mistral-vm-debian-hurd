@@ -1,0 +1,23 @@
+diff --git a/riscv64/riscv64/hpclock.c b/riscv64/riscv64/hpclock.c
+index 0b94dfa..fbc9fff 100644
+--- a/riscv64/riscv64/hpclock.c
++++ b/riscv64/riscv64/hpclock.c
+@@ -4,13 +4,14 @@
+ uint32_t
+ hpclock_read_counter(void)
+ {
+-	panic("TODO: not implemented");
+-	return 0;
++	uint64_t t;
++	__asm__ volatile ("rdtime %0" : "=r" (t));
++	return (uint32_t) t;
+ }
+ 
+ uint32_t
+ hpclock_get_counter_period_nsec(void)
+ {
+-	panic("TODO: not implemented");
+-	return 0;
++	/* QEMU virt ACLINT mtimer runs at 10 MHz.  */
++	return 100;
+ }
