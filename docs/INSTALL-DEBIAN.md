@@ -259,6 +259,12 @@ au clone GitHub.
            '185.199.108.133 objects.githubusercontent.com' '140.82.121.10 codeload.github.com' \
            '172.65.251.78 gitlab.com' '217.197.84.140 codeberg.org' \
            '18.239.50.80 huggingface.co' '18.239.105.46 datasets-server.huggingface.co' \
+           '18.239.50.16 huggingface.co' '18.239.50.49 huggingface.co' '18.239.50.103 huggingface.co' \
+           '18.239.105.15 datasets-server.huggingface.co' '18.239.105.60 datasets-server.huggingface.co' \
+           '18.239.105.115 datasets-server.huggingface.co' \
+           '3.173.161.31 cdn-lfs.hf.co' '3.173.161.84 cdn-lfs.hf.co' '3.173.161.95 cdn-lfs.hf.co' '3.173.161.109 cdn-lfs.hf.co' \
+           '54.192.138.4 cas-bridge.xethub.hf.co' '54.192.138.17 cas-bridge.xethub.hf.co' '54.192.138.99 cas-bridge.xethub.hf.co' '54.192.138.101 cas-bridge.xethub.hf.co' \
+           '18.244.140.9 transfer.xethub.hf.co' '18.244.140.27 transfer.xethub.hf.co' '18.244.140.83 transfer.xethub.hf.co' '18.244.140.104 transfer.xethub.hf.co' \
            '96.47.72.84 freebsd.org' '96.47.72.77 www.freebsd.org' \
            '163.237.194.45 cgit.freebsd.org' '85.30.190.139 git.freebsd.org' \
            '209.51.188.168 git.savannah.gnu.org' '142.132.237.69 repo.or.cz'; do

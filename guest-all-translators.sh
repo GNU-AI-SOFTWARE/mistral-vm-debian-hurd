@@ -116,6 +116,24 @@ guest_net () {
     pin_host 194.71.11.165 cdimage.debian.org
     pin_host 18.239.50.80 huggingface.co
     pin_host 18.239.105.46 datasets-server.huggingface.co
+    pin_host 18.239.50.16 huggingface.co
+    pin_host 18.239.50.49 huggingface.co
+    pin_host 18.239.50.103 huggingface.co
+    pin_host 18.239.105.15 datasets-server.huggingface.co
+    pin_host 18.239.105.60 datasets-server.huggingface.co
+    pin_host 18.239.105.115 datasets-server.huggingface.co
+    pin_host 3.173.161.31 cdn-lfs.hf.co
+    pin_host 3.173.161.84 cdn-lfs.hf.co
+    pin_host 3.173.161.95 cdn-lfs.hf.co
+    pin_host 3.173.161.109 cdn-lfs.hf.co
+    pin_host 54.192.138.4 cas-bridge.xethub.hf.co
+    pin_host 54.192.138.17 cas-bridge.xethub.hf.co
+    pin_host 54.192.138.99 cas-bridge.xethub.hf.co
+    pin_host 54.192.138.101 cas-bridge.xethub.hf.co
+    pin_host 18.244.140.9 transfer.xethub.hf.co
+    pin_host 18.244.140.27 transfer.xethub.hf.co
+    pin_host 18.244.140.83 transfer.xethub.hf.co
+    pin_host 18.244.140.104 transfer.xethub.hf.co
     pin_host 140.82.121.4 github.com
     pin_host 140.82.121.3 github.com
     pin_host 185.199.108.133 raw.githubusercontent.com
