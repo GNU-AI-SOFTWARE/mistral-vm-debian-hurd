@@ -150,6 +150,29 @@ nombres sont du bruit tant qu'aucun `.nn` entraîné n'est chargé.
 Roundtrip de vérification : `save` → `reset` → `load` → même `input`
 doit redonner exactement la même sortie.
 
+### 4.3.1 Entraîner son propre `.nn` (train_nn.py)
+
+`neuron-translator` fournit un trainer externe de référence
+(`scripts/train_nn.py`, branche `vibe/train-nn-tool-a06f4a`, PR #2) :
+
+```console
+cd /root/src/neuron-translator
+git fetch origin vibe/train-nn-tool-a06f4a && git checkout vibe/train-nn-tool-a06f4a
+python3 scripts/train_nn.py --data /root/data.jsonl --topology 2,8,1 --epochs 500 --lr 0.5 --out /root/modele.nn
+echo 'topology 2,8,1' > /llm1
+echo 'load /root/modele.nn' > /llm1
+echo 'input 0.9,0.9' > /llm1
+cat /llm1
+```
+
+`data.jsonl` : un `{"input": […], "output": […]}` par ligne (les tailles
+doivent correspondre à la topologie). Le script écrit le format
+`.nn v2` documenté et s'auto-vérifie. Validé dans la VM :
+placeholder `0.527026` → après `load`, `input 0.9,0.9` → `1.000000`,
+`input 0.1,0.1` → `0.000000`. Le format `.nn` est un MLP dense : un LLM
+transformer n'y tient pas — les gros modèles passent par la retrieval
+`/db` + `/reply`.
+
 ### 4.4 Orchestrateur
 
 ```console
