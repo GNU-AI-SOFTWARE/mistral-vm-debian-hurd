@@ -246,8 +246,27 @@ au clone GitHub.
 
 - Réseau de l'invité : slirp (10.0.2.15, passerelle 10.0.2.2, DNS
   10.0.2.3) ; le DNS UDP de slirp est souvent cassé sur Hurd, les
-  scripts guest épinglent `deb.debian.org`, `github.com`,
-  `huggingface.co`, `datasets-server.huggingface.co` dans `/etc/hosts`.
+  scripts guest épinglent dans `/etc/hosts` : `deb.debian.org`,
+  `cdimage.debian.org`, `github.com`, `raw.githubusercontent.com`,
+  `objects.githubusercontent.com`, `codeload.github.com`, `gitlab.com`,
+  `codeberg.org`, `huggingface.co`, `datasets-server.huggingface.co`,
+  `freebsd.org`, `www.freebsd.org`, `cgit.freebsd.org`,
+  `git.freebsd.org`, `git.savannah.gnu.org`, `repo.or.cz`.
+  À la main, si vous ne relancez pas les scripts guest :
+
+  ```bash
+  for e in '140.82.121.3 github.com' '185.199.108.133 raw.githubusercontent.com' \
+           '185.199.108.133 objects.githubusercontent.com' '140.82.121.10 codeload.github.com' \
+           '172.65.251.78 gitlab.com' '217.197.84.140 codeberg.org' \
+           '18.239.50.80 huggingface.co' '18.239.105.46 datasets-server.huggingface.co' \
+           '96.47.72.84 freebsd.org' '96.47.72.77 www.freebsd.org' \
+           '163.237.194.45 cgit.freebsd.org' '85.30.190.139 git.freebsd.org' \
+           '209.51.188.168 git.savannah.gnu.org' '142.132.237.69 repo.or.cz'; do
+    set -- $e
+    grep -q " $2\$" /etc/hosts || echo "$1 $2" >> /etc/hosts
+  done
+  ```
+
   Diagnostic : `guest-netfix.sh`. Ne jamais faire `settrans -fg` sur
   `/servers/socket/2` (tue netdde et `/dev/eth0`).
 

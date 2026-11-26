@@ -114,7 +114,21 @@ guest_net () {
     # the build touches so apt/git still work when the resolver fails:
     pin_host 194.71.11.165 deb.debian.org
     pin_host 194.71.11.165 cdimage.debian.org
+    pin_host 18.239.50.80 huggingface.co
+    pin_host 18.239.105.46 datasets-server.huggingface.co
     pin_host 140.82.121.4 github.com
+    pin_host 140.82.121.3 github.com
+    pin_host 185.199.108.133 raw.githubusercontent.com
+    pin_host 185.199.108.133 objects.githubusercontent.com
+    pin_host 140.82.121.10 codeload.github.com
+    pin_host 172.65.251.78 gitlab.com
+    pin_host 217.197.84.140 codeberg.org
+    pin_host 96.47.72.84 freebsd.org
+    pin_host 96.47.72.77 www.freebsd.org
+    pin_host 163.237.194.45 cgit.freebsd.org
+    pin_host 85.30.190.139 git.freebsd.org
+    pin_host 209.51.188.168 git.savannah.gnu.org
+    pin_host 142.132.237.69 repo.or.cz
     if getent hosts deb.debian.org >/dev/null 2>&1; then
         echo "DNS-OK"
     else
