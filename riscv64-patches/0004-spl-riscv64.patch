@@ -1,0 +1,138 @@
+diff --git a/riscv64/riscv64/spl.S b/riscv64/riscv64/spl.S
+index 5c23abf..6858175 100644
+--- a/riscv64/riscv64/spl.S
++++ b/riscv64/riscv64/spl.S
+@@ -33,61 +33,96 @@
+  */
+ #define XEN_SETMASK()				\
+ 	/* TODO: IMPLEMENT */
+-ENTRY(spl0)
+-	/* TODO: implement */
+-
+ /*
+- * Historically, SETIPL(level) was called
+- * for spl levels 1-6, now we have combined
+- * all the intermediate levels into the highest level
+- * such that interrupts are either on or off,
+- * since modern hardware can handle it.
+- * This simplifies the interrupt handling
+- * especially for the linux drivers.
++ * riscv64 spl: the IPL is tracked in curr_ipl[] (pic.c); S-mode
++ * interrupts are enabled/disabled through sstatus.SIE (bit 1).
++ * UP only for now (NCPUS == 1): curr_ipl[0].
+  */
+-Entry(splsoftclock)
++#define SIE_BIT	0x2
++
++.macro SPL_SET_LVL lvl
++	la	t0, curr_ipl
++	lw	t1, 0(t0)		/* old ipl */
++	li	t2, \lvl
++	sw	t2, 0(t0)		/* curr_ipl = lvl */
++	beqz	\lvl, 8f
++	csrc	sstatus, SIE_BIT	/* disable S-mode interrupts */
++	j	9f
++8:	csrs	sstatus, SIE_BIT	/* enable S-mode interrupts */
++9:	mv	a0, t1		/* return old ipl */
++	ret
++.endm
++
++/* spl_t splN(void): raise IPL to N, return previous IPL.  */
++ENTRY(spl0)
++	SPL_SET_LVL 0
+ ENTRY(spl1)
++	SPL_SET_LVL 1
++ENTRY(splsoftclock)
+ ENTRY(spl2)
++	SPL_SET_LVL 2
+ ENTRY(spl3)
++	SPL_SET_LVL 3
+ Entry(splnet)
+ Entry(splhdw)
+ ENTRY(spl4)
++	SPL_SET_LVL 4
+ Entry(splbio)
+ Entry(spldcm)
+ ENTRY(spl5)
++	SPL_SET_LVL 5
+ Entry(spltty)
+ Entry(splimp)
+ Entry(splvm)
+ ENTRY(spl6)
++	SPL_SET_LVL 6
+ Entry(splclock)
+ Entry(splsched)
+ Entry(splhigh)
+ Entry(splhi)
+ ENTRY(spl7)
+-	/* TODO: implement */
++	SPL_SET_LVL 7
++
++/* spl_t splx(spl_t ipl): set IPL to ipl (a0), return previous IPL.  */
++.macro SPL_SET_REG
++	la	t0, curr_ipl
++	lw	t1, 0(t0)
++	sw	a0, 0(t0)
++	beqz	a0, 8f
++	csrc	sstatus, SIE_BIT
++	j	9f
++8:	csrs	sstatus, SIE_BIT
++9:	mv	a0, t1
++	ret
++.endm
++
+ ENTRY(splx)
+-	/* TODO: implement */
++	SPL_SET_REG
++
++	.align	TEXT_ALIGN
++	.globl	spl
++spl:
++	SPL_SET_REG
++
+ /*
+  * Like splx() but returns with interrupts disabled and does
+- * not return the previous ipl.  This should only be called
+- * when returning from an interrupt.
++ * not return the previous ipl.
+  */
+ 	.align	TEXT_ALIGN
+ 	.globl	splx_cli
+ splx_cli:
+-	/* TODO: implement */
+-/*
+- * NOTE: This routine must *not* use %ecx, otherwise
+- * the interrupt code will break.
+- */
+-	.align	TEXT_ALIGN
+-	.globl	spl
+-spl:
+-	/* TODO: implement */
++	la	t0, curr_ipl
++	li	t1, SPL7
++	sw	t1, 0(t0)
++	csrc	sstatus, SIE_BIT
++	ret
++
+ ENTRY(sploff)
+-	/* TODO: implement */
++	SPL_SET_LVL SPL7
++
+ ENTRY(splon)
+-	/* TODO: implement */
++	SPL_SET_LVL 0
++
+ 	.data
+ 	.align	DATA_ALIGN
+ softclkpending:
+@@ -95,4 +130,7 @@ softclkpending:
+ 	.text
+ 
+ ENTRY(setsoftclock)
+-	/* TODO: implement */
+\ No newline at end of file
++	la	t0, softclkpending
++	li	t1, 1
++	sw	t1, 0(t0)
++	ret
+\ No newline at end of file
