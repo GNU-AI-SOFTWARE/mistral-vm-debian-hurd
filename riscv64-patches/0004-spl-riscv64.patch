@@ -1,5 +1,5 @@
 diff --git a/riscv64/riscv64/spl.S b/riscv64/riscv64/spl.S
-index 5c23abf..7c6b469 100644
+index 5c23abf..ca3f943 100644
 --- a/riscv64/riscv64/spl.S
 +++ b/riscv64/riscv64/spl.S
 @@ -33,61 +33,99 @@
@@ -30,7 +30,7 @@ index 5c23abf..7c6b469 100644
 +	li	t2, \lvl
 +	sw	t2, 0(t0)		/* curr_ipl = lvl */
 +	li	t3, SIE_BIT
-+	beqz	\lvl, 8f
++	beqz	t2, 8f
 +	csrc	sstatus, t3	/* disable S-mode interrupts */
 +	j	9f
 +8:	csrs	sstatus, t3	/* enable S-mode interrupts */
