@@ -1,8 +1,8 @@
 diff --git a/riscv64/riscv64/spl.S b/riscv64/riscv64/spl.S
-index 5c23abf..6858175 100644
+index 5c23abf..7c6b469 100644
 --- a/riscv64/riscv64/spl.S
 +++ b/riscv64/riscv64/spl.S
-@@ -33,61 +33,96 @@
+@@ -33,61 +33,99 @@
   */
  #define XEN_SETMASK()				\
  	/* TODO: IMPLEMENT */
@@ -29,10 +29,11 @@ index 5c23abf..6858175 100644
 +	lw	t1, 0(t0)		/* old ipl */
 +	li	t2, \lvl
 +	sw	t2, 0(t0)		/* curr_ipl = lvl */
++	li	t3, SIE_BIT
 +	beqz	\lvl, 8f
-+	csrc	sstatus, SIE_BIT	/* disable S-mode interrupts */
++	csrc	sstatus, t3	/* disable S-mode interrupts */
 +	j	9f
-+8:	csrs	sstatus, SIE_BIT	/* enable S-mode interrupts */
++8:	csrs	sstatus, t3	/* enable S-mode interrupts */
 +9:	mv	a0, t1		/* return old ipl */
 +	ret
 +.endm
@@ -73,10 +74,11 @@ index 5c23abf..6858175 100644
 +	la	t0, curr_ipl
 +	lw	t1, 0(t0)
 +	sw	a0, 0(t0)
++	li	t3, SIE_BIT
 +	beqz	a0, 8f
-+	csrc	sstatus, SIE_BIT
++	csrc	sstatus, t3
 +	j	9f
-+8:	csrs	sstatus, SIE_BIT
++8:	csrs	sstatus, t3
 +9:	mv	a0, t1
 +	ret
 +.endm
@@ -111,7 +113,8 @@ index 5c23abf..6858175 100644
 +	la	t0, curr_ipl
 +	li	t1, SPL7
 +	sw	t1, 0(t0)
-+	csrc	sstatus, SIE_BIT
++	li	t3, SIE_BIT
++	csrc	sstatus, t3
 +	ret
 +
  ENTRY(sploff)
@@ -125,7 +128,7 @@ index 5c23abf..6858175 100644
  	.data
  	.align	DATA_ALIGN
  softclkpending:
-@@ -95,4 +130,7 @@ softclkpending:
+@@ -95,4 +133,7 @@ softclkpending:
  	.text
  
  ENTRY(setsoftclock)
