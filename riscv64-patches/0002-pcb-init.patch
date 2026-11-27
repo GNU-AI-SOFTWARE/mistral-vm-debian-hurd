@@ -1,0 +1,33 @@
+diff --git a/riscv64/riscv64/pcb.c b/riscv64/riscv64/pcb.c
+index 76b00d6..38f403d 100644
+--- a/riscv64/riscv64/pcb.c
++++ b/riscv64/riscv64/pcb.c
+@@ -160,8 +160,6 @@ void pcb_module_init(void)
+ {
+ 	kmem_cache_init(&pcb_cache, "pcb", sizeof(struct pcb),
+ 			KERNEL_STACK_ALIGN, NULL, 0);
+-
+-	panic("TODO: not implemented");
+ }
+ 
+ void pcb_init(task_t parent_task, thread_t thread)
+@@ -181,8 +179,7 @@ void pcb_init(task_t parent_task, thread_t thread)
+ 	memset(pcb, 0, sizeof *pcb);
+ 	simple_lock_init(&pcb->lock);
+ 
+-
+-	panic("TODO: not implemented");
++	thread->pcb = pcb;
+ }
+ 
+ void pcb_terminate(thread_t thread)
+@@ -192,7 +189,8 @@ void pcb_terminate(thread_t thread)
+ 	counter(if (--c_threads_current < c_threads_min)
+ 			c_threads_min = c_threads_current);
+ 
+-	panic("TODO: not implemented");
++	kmem_cache_free(&pcb_cache, (vm_offset_t) pcb);
++	thread->pcb = 0;
+ }
+ 
+ /*
