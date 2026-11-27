@@ -1,0 +1,45 @@
+diff --git a/riscv64/riscv64/pcb.c b/riscv64/riscv64/pcb.c
+index 76b00d6..e19bd1d 100644
+--- a/riscv64/riscv64/pcb.c
++++ b/riscv64/riscv64/pcb.c
+@@ -71,8 +71,6 @@ void stack_attach(
+ 			c_stacks_max = c_stacks_current);
+ 
+ 	thread->kernel_stack = stack;
+-
+-	panic("TODO: not implemented");
+ }
+ 
+ /*
+@@ -107,7 +105,8 @@ vm_offset_t stack_detach(thread_t thread)
+ 
+ void switch_ktss(pcb_t pcb)
+ {
+-	panic("TODO: not implemented");
++	/* No TSS on riscv64.  */
++	(void) pcb;
+ }
+ 
+ /* If NEW_IOPB is not null, the SIZE denotes the number of bytes in
+@@ -115,7 +114,8 @@ void switch_ktss(pcb_t pcb)
+ void
+ update_ktss_iopb (unsigned char *new_iopb, io_port_t size)
+ {
+-	panic("TODO: not implemented");
++	/* No IOPB on riscv64.  */
++	(void) new_iopb; (void) size;
+ }
+ 
+ /*
+@@ -131,7 +131,10 @@ void stack_handoff(
+ 	int		mycpu = cpu_number();
+ 	vm_offset_t	stack;
+ 
+-	panic("TODO: not implemented");
++	(void) mycpu;
++	stack = old->kernel_stack;
++	old->kernel_stack = 0;
++	new->kernel_stack = stack;
+ }
+ 
+ /*
