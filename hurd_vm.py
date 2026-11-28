@@ -78,6 +78,10 @@ Environment variables:
     HURD_VM_GW        override the gateway exported to the guest
                       (bridged mode: the real LAN gateway)
     HURD_VM_DNS       override the DNS exported to the guest
+    HURD_VM_TIMEOUT_LOGIN    seconds until the login prompt (default 900;
+                      raise it on slow TCG hosts, e.g. Termux/Android)
+    HURD_VM_TIMEOUT_SCRIPT   seconds for the whole guest script
+                      (default 3600)
 
 Requires on the host: qemu-system-x86 (KVM used when /dev/kvm is
 available), e2fsprogs (e2fsck, debugfs), python3.  The guest is
@@ -111,8 +115,11 @@ IMAGE_URL = ("https://cdimage.debian.org/cdimage/ports/latest/"
 
 CONSOLE_ARG = "console=com0"     # serial kernel console (COM1)
 
-TIMEOUT_LOGIN = 900       # seconds until the login prompt
-TIMEOUT_SCRIPT = 3600     # seconds for the whole guest script
+# Timeouts are environment-overridable: on slow pure-emulation hosts
+# (TCG, e.g. QEMU inside Termux on Android, no KVM) a boot can take
+# tens of minutes -- see docs/TERMUX.md.
+TIMEOUT_LOGIN = int(os.environ.get("HURD_VM_TIMEOUT_LOGIN", "900"))
+TIMEOUT_SCRIPT = int(os.environ.get("HURD_VM_TIMEOUT_SCRIPT", "3600"))
 
 # Prepared copy of the image.  Set HURD_VM_CI_IMAGE to boot a
 # private one instead of the shared default — two drivers may run
