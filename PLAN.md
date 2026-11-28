@@ -138,6 +138,22 @@ Scripts d'exemple (httpfs-translator, build Hurd, restauration des
 en-têtes Mach), séchage des traces (`serial.log`), réutilisation
 par la CI des translators de la pile.
 
+### Phase 3 — Pile LLM complète dans la VM (en cours)
+
+- `guest-inference.sh` : build + `make check` d'`inference-translator`
+  sur Hurd réel, montage de `/inference`, démo POSIX (`GUEST-INF-OK`).
+- `launch_inference.py` (inference-translator/hurd-vm) : monte `/db`,
+  `/orchestrate` (+ `/llm1…N`), `/inference`, `/web`, puis ouvre le
+  client `inference` — GNU AI se comporte comme un LLM dans la VM.
+- **Livrable** : one-shot `python3 hurd_vm.py <img> guest-inference.sh`
+  vert + session interactive `ssh -p 2222 root@127.0.0.1` avec `/reply`
+  ancré.
+- **Acceptation** : dans la VM, `/reply <question>` répond par une
+  réponse courte ancrée (`inf_training_answer`, PR #93) ou par la
+  sortie d'un neurone quand `/llm1…N` sont montés.
+- **Dépend de** : phases 0–2 (terminées) + les phases LLM des
+  translators de la pile.
+
 État courant (octobre 2026) : **terminé** — le sandbox CI QEMU sert
 la pile (build et `make check` des translators sur GNU/Hurd réel).
 La suite ne se joue plus dans ce dépôt : passage au bare-metal
@@ -152,6 +168,7 @@ matériel cible est couvert.
 | 0 | Image officielle, copie CI, patch GRUB série | — | terminée |
 | 1 | Driver : boot, login root, script invité, arrêt | 0 | terminée |
 | 2 | Scripts d'exemple + intégration CI des translators | 1 | terminée |
+| 3 | Pile LLM complète dans la VM (`launch_inference.py`, `/reply` ancré) | 2 + phases LLM des translators | en cours |
 
 Ce dépôt est une propriété permanente de la pile, pas un chantier :
 tant que la pile vise GNU/Hurd, chaque translator y est construit et
